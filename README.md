@@ -1,7 +1,7 @@
 # Spark Kit — Roadmap de templatification
 
-> Suivi de la transformation progressive de `kyklos-container` en **template Spark** réutilisable pour de nouveaux sites.
-> Le reste du repo reste opérationnel pour le déploiement `kyklos` en cours.
+> Repo méta de l'org [`spark-kit`](https://github.com/spark-kit) : suivi de la construction de la kit Spark et archive des incidents transverses.
+> Sites clients dans des repos séparés (ex: [`spark-kit/kyklos`](https://github.com/spark-kit/kyklos)). Gabarits méthodologiques dans [`spark-kit/templates`](https://github.com/spark-kit/templates).
 >
 > **Voir aussi** : [`INCIDENTS.md`](INCIDENTS.md) — archive des fails rencontrés sur les déploiements Spark, avec leçons exploitables à porter dans la kit.
 
@@ -17,7 +17,7 @@ Distinction critique à garder à l'œil — on a confondu les deux pendant le b
 | **Site** | un **déploiement** Spark concret (1 Mac Mini, 1 domaine, 1 client). Le site courant s'appelle `kyklos` et utilise `usine.io`. |
 | **`SPARK_PREFIX`** (futur) | la valeur par-déploiement qui forme les hostnames `<prefix>-<service>.<domain>`. Vaut `kyklos` aujourd'hui. |
 | **Pattern A** | tunnel Cloudflare *local-managed* (YAML sur l'hôte). Cf. archi §3.3. Choix Spark par défaut. |
-| **kyklos-container** | nom historique du repo. À renommer en Phase 1. |
+| **kyklos** | nom du 1er site Spark déployé (repo [`spark-kit/kyklos`](https://github.com/spark-kit/kyklos)). |
 
 ---
 
@@ -83,7 +83,7 @@ Reste manuel (1× par compte CF) : `cloudflared login`.
 - Préfixe `KYKLOS_*` sur **toutes** les vars d'env (compose, Caddyfile, scripts, `.env.example`)
 - Markers `# >>> kyklos-begin` / `# <<< kyklos-end` dans le YAML cloudflared (édité par tunnel-up.sh)
 - Commentaires `.env.example` parlent de "Kyklos / Cloudflare Tunnel"
-- Nom du dossier projet `kyklos-container/`
+- Nom du dossier local `kyklos-container/` (l'URL GitHub a déjà migré vers `spark-kit/kyklos` le 2026-05-06)
 
 ### 🚫 Manquant
 - `scripts/spark-bootstrap.sh` (host setup automatisé) — la spec existe au §3.2 du doc archi mais n'est pas encore dans le repo
@@ -108,7 +108,7 @@ Phases ordonnées par dépendance. **On peut continuer à bosser sur le site `ky
 - [ ] `KYKLOS_*` → `SPARK_*` dans `docker-compose.yml`, `config/Caddyfile`, `scripts/tunnel-*.sh`, `.env.example`, `.env`
 - [ ] Markers `kyklos-begin/end` → `spark-begin/end` dans `scripts/tunnel-*.sh` (avec lecture tolérante des anciens markers le temps de la migration)
 - [ ] Réécriture des commentaires `.env.example` et messages d'erreur des scripts en termes "Spark"
-- [ ] (Optionnel) renommer le dossier `kyklos-container/` → `spark-container/` — impacte raccourcis shell + mémoires Claude (chemins absolus dans `~/.claude/projects/.../memory/`)
+- [ ] (Optionnel) renommer le dossier local `kyklos-container/` → `kyklos/` — impacte raccourcis shell + mémoires Claude (chemins absolus dans `~/.claude/projects/.../memory/`). L'URL GitHub a déjà migré.
 
 ### Phase 2 — Volumes externes (déliaison données ↔ nom projet)
 **Pourquoi** : `docker-compose` v2 préfixe les volumes nommés par `name:` du projet. Renommer `name: kyklos` → `name: spark` crée des volumes vides `spark_postgres_data` et orphelinise les données existantes.
@@ -172,8 +172,8 @@ Axe **orthogonal** aux phases 1-5 ci-dessus (qui concernent l'infrastructure de 
 
 ### Trois chantiers parallèles
 
-#### Chantier A — Patterns d'intégration réutilisables (`spark-kit/playbooks/`)
-Bibliothèque de **briques** assemblables :
+#### Chantier A — Patterns d'intégration réutilisables → futur repo `spark-kit/playbooks`
+Bibliothèque de **briques** assemblables (repo à créer) :
 - `n8n-nocodb-bridge` — pattern de base (auth, CRUD, webhooks NocoDB → n8n)
 - `legacy-api-pull` — polling API legacy → NocoDB (delta, idempotence)
 - `legacy-csv-import` — import périodique CSV → NocoDB
@@ -181,12 +181,12 @@ Bibliothèque de **briques** assemblables :
 - `secrets-vault` — convention credentials côté n8n
 - (autres au fur et à mesure)
 
-#### Chantier B — Méthodologie ingest → PRD → POC (`spark-kit/methodology/`)
-Le **flux** que l'agent (Claude / consultant) suit pour transformer une découverte client en livrable :
-- ✅ [`methodology/README.md`](methodology/README.md) — vue d'ensemble du pipeline + articulation avec wiki
-- ✅ [`methodology/ingest-legacy-docs.md`](methodology/ingest-legacy-docs.md) — procédure d'ingestion de doc legacy → fiche-logiciel structurée
-- ✅ [`methodology/prd-template.md`](methodology/prd-template.md) — gabarit PRD POC (inspiré de `wiki/topics/veille-prd.md`)
-- ⏳ `methodology/poc-from-prd.md` — du PRD → assemblage de playbooks → implémentation. Bloqué par chantier A (briques `spark-kit/playbooks/`).
+#### Chantier B — Méthodologie ingest → PRD → POC → repo [`spark-kit/templates`](https://github.com/spark-kit/templates)
+Le **flux** que l'agent (Claude / consultant) suit pour transformer une découverte client en livrable. **Extrait dans son propre repo** (privé pour l'instant, public à terme) :
+- ✅ `templates/README.md` — vue d'ensemble du pipeline + articulation avec wiki
+- ✅ `templates/ingest-legacy-docs.md` — procédure d'ingestion de doc legacy → fiche-logiciel structurée
+- ✅ `templates/prd-template.md` — gabarit PRD POC (inspiré de `wiki/topics/veille-prd.md`)
+- ⏳ `templates/poc-from-prd.md` — du PRD → assemblage de playbooks → implémentation. Bloqué par chantier A.
 - S'articule avec `wiki/topics/questionnaire-onboarding.md` (existant côté wiki Spark, ne pas dupliquer)
 
 #### Chantier C — Outillage Claude (`spark-kit/skills/` et `spark-kit/mcp/`)
@@ -208,7 +208,7 @@ Ne pas dupliquer ce qui existe :
 - `wiki/topics/questionnaire-onboarding.md` — découverte client → **entrée du flux méthodologique**
 - `wiki/topics/veille-prd.md` — modèle de PRD → **gabarit pour `prd-template.md`**
 
-`spark-kit/methodology/` doit pointer vers ces docs, pas les recopier.
+Le repo `spark-kit/templates` doit pointer vers ces docs, pas les recopier.
 
 ---
 
@@ -247,3 +247,4 @@ Ne pas dupliquer ce qui existe :
 | 2026-05-06 | 0 | Création de `INCIDENTS.md` + archive INC-2026-05-05 (NocoDB / `NC_DB_JSON`) et incident wiki Colima sizing |
 | 2026-05-06 | 0 | Cadrage couche méthodologique : §2.2 rôle des composants (NocoDB ≠ source de vérité) + §4bis 3 chantiers A/B/C, focus B en prochaine session |
 | 2026-05-06 | B | Chantier B amorcé : `methodology/README.md` + `ingest-legacy-docs.md` + `prd-template.md`. `poc-from-prd.md` reste bloqué par chantier A. |
+| 2026-05-06 | — | Migration vers org GitHub `spark-kit` : transfert des 2 repos, création de `spark-kit/kyklos` (option B = 1 repo client avec infra/ + discovery/ + LESSONS-LEARNED.md + CLAUDE.md), extraction de `methodology/` vers le repo dédié [`spark-kit/templates`](https://github.com/spark-kit/templates) (privé pour l'instant, public à terme). Méthodologie supprimée de ce repo. |
