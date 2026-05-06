@@ -1,7 +1,7 @@
 # Spark Kit — Roadmap de templatification
 
 > Repo méta de l'org [`spark-kit`](https://github.com/spark-kit) : suivi de la construction de la kit Spark et archive des incidents transverses.
-> Sites clients dans des repos séparés (ex: [`spark-kit/kyklos`](https://github.com/spark-kit/kyklos)). Gabarits méthodologiques dans [`spark-kit/templates`](https://github.com/spark-kit/templates).
+> Sites clients dans des repos séparés (`spark-kit/<client>`, privés). Gabarits méthodologiques dans [`spark-kit/templates`](https://github.com/spark-kit/templates).
 >
 > **Voir aussi** : [`INCIDENTS.md`](INCIDENTS.md) — archive des fails rencontrés sur les déploiements Spark, avec leçons exploitables à porter dans la kit.
 
@@ -14,10 +14,10 @@ Distinction critique à garder à l'œil — on a confondu les deux pendant le b
 | Terme | Sens |
 |---|---|
 | **Spark** | nom de la **kit / template** (ce qu'on construit ici). Cf. wiki `spark-vault/wiki/topics/architecture-technique.md`. |
-| **Site** | un **déploiement** Spark concret (1 Mac Mini, 1 domaine, 1 client). Le site courant s'appelle `kyklos` et utilise `usine.io`. |
-| **`SPARK_PREFIX`** (futur) | la valeur par-déploiement qui forme les hostnames `<prefix>-<service>.<domain>`. Vaut `kyklos` aujourd'hui. |
+| **Site** | un **déploiement** Spark concret (1 Mac Mini, 1 domaine, 1 client). Chaque site a son propre repo `spark-kit/<client>` et son propre prefix runtime. |
+| **`SPARK_PREFIX`** (futur) | la valeur par-déploiement qui forme les hostnames `<prefix>-<service>.<domain>` (ex: `acme-n8n.acme.example`). |
 | **Pattern A** | tunnel Cloudflare *local-managed* (YAML sur l'hôte). Cf. archi §3.3. Choix Spark par défaut. |
-| **kyklos** | nom du 1er site Spark déployé (repo [`spark-kit/kyklos`](https://github.com/spark-kit/kyklos)). |
+| **`<client>`** | dans cette doc, placeholder pour un déploiement-site donné. Chaque site a son propre slug (interne, pas mentionné ici). |
 
 ---
 
@@ -60,7 +60,7 @@ Reste manuel (1× par compte CF) : `cloudflared login`.
 
 **NocoDB n'est jamais la source de vérité business.** C'est :
 - un **cache/staging** quand la donnée existe dans un legacy
-- la **source pour cette donnée précise** quand elle n'existait nulle part avant (ex: WMS d'un atelier qui n'avait que du papier — cas Kyklos)
+- la **source pour cette donnée précise** quand elle n'existait nulle part avant (ex: WMS d'un atelier qui n'avait que du papier)
 
 **n8n est le bridge contrôlé** : il ouvre des portes choisies vers les sources de vérité, pas un proxy ouvert.
 
@@ -72,18 +72,18 @@ Reste manuel (1× par compte CF) : `cloudflared login`.
 
 ### ✅ Déjà template-friendly
 - Stack `docker-compose.yml` paramétrée par variables (host/domain/prefix/port)
-- Reverse-proxy Caddy lit ses vhosts depuis `${KYKLOS_PREFIX}` / `${KYKLOS_DOMAIN}`
+- Reverse-proxy Caddy lit ses vhosts depuis `${<LEGACY>_PREFIX}` / `${<LEGACY>_DOMAIN}` (le préfixe historique vient du 1er site déployé — à renommer en `SPARK_*` à la Phase 1)
 - `.env.example` couvre les 10 variables nécessaires
 - Scripts `tunnel-up.sh` / `tunnel-down.sh` idempotents, édition par bloc marqué
 - Pattern A (local-managed) verrouillé et documenté
 - Postgres + n8n + NocoDB + Caddy + Uptime-Kuma fonctionnels
 
 ### ⚠️ Encore hardcodé / à template-iser
-- `name: kyklos` dans compose → préfixe les **volumes** et les **containers** (`kyklos_postgres_data`, `kyklos-postgres-1`)
-- Préfixe `KYKLOS_*` sur **toutes** les vars d'env (compose, Caddyfile, scripts, `.env.example`)
-- Markers `# >>> kyklos-begin` / `# <<< kyklos-end` dans le YAML cloudflared (édité par tunnel-up.sh)
-- Commentaires `.env.example` parlent de "Kyklos / Cloudflare Tunnel"
-- Nom du dossier local `kyklos-container/` (l'URL GitHub a déjà migré vers `spark-kit/kyklos` le 2026-05-06)
+- `name: <legacy-site>` dans compose → préfixe les **volumes** et les **containers** (`<legacy-site>_postgres_data`, `<legacy-site>-postgres-1`)
+- Préfixe `<LEGACY>_*` sur **toutes** les vars d'env (compose, Caddyfile, scripts, `.env.example`)
+- Markers `# >>> <legacy-site>-begin` / `# <<< <legacy-site>-end` dans le YAML cloudflared (édités par tunnel-up.sh)
+- Commentaires `.env.example` parlent du nom du 1er site
+- Nom du dossier local porte le nom du 1er site (l'URL GitHub a déjà migré vers `spark-kit/<client>`)
 
 ### 🚫 Manquant
 - `scripts/spark-bootstrap.sh` (host setup automatisé) — la spec existe au §3.2 du doc archi mais n'est pas encore dans le repo
@@ -96,25 +96,25 @@ Reste manuel (1× par compte CF) : `cloudflared login`.
 
 ## 4. Roadmap par phase
 
-Phases ordonnées par dépendance. **On peut continuer à bosser sur le site `kyklos` pendant la majorité des phases** ; les seules à risque pour la prod sont 1+2 (rename + volumes), à faire ensemble.
+Phases ordonnées par dépendance. **On peut continuer à bosser sur les sites en production pendant la majorité des phases** ; les seules à risque pour la prod sont 1+2 (rename + volumes), à faire ensemble.
 
 ### Phase 0 — Capture des décisions (ce document) ← **on est ici**
 
-### Phase 1 — Rename in-place `kyklos` → `spark`
-**Bloqué par Phase 2** (sinon perte des volumes Docker du déploiement live).
+### Phase 1 — Rename in-place `<LEGACY>_*` → `SPARK_*`
+**Bloqué par Phase 2** (sinon perte des volumes Docker des déploiements live).
 
-À faire dans le repo :
-- [ ] `name: kyklos` → `name: spark` dans `docker-compose.yml`
-- [ ] `KYKLOS_*` → `SPARK_*` dans `docker-compose.yml`, `config/Caddyfile`, `scripts/tunnel-*.sh`, `.env.example`, `.env`
-- [ ] Markers `kyklos-begin/end` → `spark-begin/end` dans `scripts/tunnel-*.sh` (avec lecture tolérante des anciens markers le temps de la migration)
+À faire dans le repo de chaque site qui traîne le préfixe legacy :
+- [ ] `name: <legacy-site>` → `name: spark` dans `docker-compose.yml`
+- [ ] `<LEGACY>_*` → `SPARK_*` dans `docker-compose.yml`, `config/Caddyfile`, `scripts/tunnel-*.sh`, `.env.example`, `.env`
+- [ ] Markers `<legacy-site>-begin/end` → `spark-begin/end` dans `scripts/tunnel-*.sh` (avec lecture tolérante des anciens markers le temps de la migration)
 - [ ] Réécriture des commentaires `.env.example` et messages d'erreur des scripts en termes "Spark"
-- [ ] (Optionnel) renommer le dossier local `kyklos-container/` → `kyklos/` — impacte raccourcis shell + mémoires Claude (chemins absolus dans `~/.claude/projects/.../memory/`). L'URL GitHub a déjà migré.
+- [ ] (Optionnel) renommer le dossier local pour aligner sur le nouveau nom de repo — impacte raccourcis shell + mémoires Claude (chemins absolus dans `~/.claude/projects/.../memory/`)
 
 ### Phase 2 — Volumes externes (déliaison données ↔ nom projet)
-**Pourquoi** : `docker-compose` v2 préfixe les volumes nommés par `name:` du projet. Renommer `name: kyklos` → `name: spark` crée des volumes vides `spark_postgres_data` et orphelinise les données existantes.
+**Pourquoi** : `docker-compose` v2 préfixe les volumes nommés par `name:` du projet. Renommer `name:` crée des volumes vides et orphelinise les données existantes.
 
 Deux options, à trancher :
-- **(a) `external: true` + nom littéral préservé** : on garde les volumes `kyklos_postgres_data` etc. en les déclarant externes. Zéro downtime, zéro migration de données. Le préfixe `kyklos_` traîne sur disque mais c'est cosmétique.
+- **(a) `external: true` + nom littéral préservé** : on garde les volumes legacy en les déclarant externes. Zéro downtime, zéro migration de données. Le préfixe legacy traîne sur disque mais c'est cosmétique.
 - **(b) Migration one-shot** via container alpine (`cp -a` de `/from` vers `/to`). Plus propre mais downtime + risque pendant la copie.
 
 **Recommandation** : (a) maintenant pour débloquer Phase 1 sans risque. Faire (b) plus tard si on a besoin de propreté disque.
@@ -191,7 +191,7 @@ Le **flux** que l'agent (Claude / consultant) suit pour transformer une découve
 
 #### Chantier C — Outillage Claude (`spark-kit/skills/` et `spark-kit/mcp/`)
 Pour que l'agent travaille efficacement sur les instances réelles :
-- **MCP n8n** — branché sur l'instance kyklos (et futures), avec token API. Décidé : OK selon expérience utilisateur.
+- **MCP n8n** — branché sur l'instance n8n d'un site, avec token API. Décidé : OK selon expérience utilisateur.
 - **Skill NocoDB** — n'existe pas, à créer. Pas de MCP NocoDB ; on se contente de l'API.
 - **Skills n8n** — déjà chargées (7 skills `n8n-*` disponibles). Rien à faire.
 
@@ -225,7 +225,7 @@ Le repo `spark-kit/templates` doit pointer vers ces docs, pas les recopier.
 | **Secrets : alphabet URL-safe `A-Za-z0-9-_`** | leçon incident NocoDB. À enforcer dans bootstrap. |
 | **Colima sizing adaptatif au host** | doc archi §1.3. 8GB → 4 GiB ; 16GB+ → 6+ GiB. |
 | **Volumes Docker nommés** (pas de bind-mounts pour data) | implicite docker-compose actuel. Backup unifiée. |
-| **`SPARK_PREFIX` ≠ "Spark"** | la kit s'appelle Spark, le préfixe par-site est libre (kyklos pour ce site). On ne renommera **pas** la valeur runtime en Phase 1. |
+| **`SPARK_PREFIX` ≠ "Spark"** | la kit s'appelle Spark, le préfixe par-site est libre (un slug différent par client). On ne renommera **pas** la valeur runtime en Phase 1 — seuls les **noms de variables** changent (`<LEGACY>_*` → `SPARK_*`). |
 
 ---
 
@@ -234,7 +234,7 @@ Le repo `spark-kit/templates` doit pointer vers ces docs, pas les recopier.
 - [ ] **Multi-tenant local** : un Mac peut-il héberger plusieurs sites Spark (n sites = n stacks) ? Si oui : `SPARK_HOST_HTTP_PORT` doit varier, et `name:` compose doit inclure le site (`name: spark-<site>`). Mon avis : *non* par défaut (1 Mac = 1 site, c'est l'esprit usine), mais à confirmer.
 - [ ] **Périmètre backup dans la template** : on inclut les scripts `pg_dumpall` + `rclone` du §2.3 archi, ou on laisse au site ?
 - [ ] **Versioning n8n workflows** : §5.3 archi flagué "provisoire" (Git local + push GitHub privé). À figer avant Phase 4 ?
-- [ ] **`KYKLOS_PREFIX=kyklos` reste-t-il la valeur de ce site ?** Si on veut migrer les URLs vers `spark-*.usine.io` un jour, c'est un chantier séparé (DNS CF + bookmarks + WEBHOOK_URL). Hors scope template.
+- [ ] **Migration des URLs runtime des sites legacy** : si on veut renommer le préfixe d'un site (slug → autre slug), c'est un chantier par-site séparé (DNS CF + bookmarks utilisateurs + WEBHOOK_URL n8n). Hors scope template.
 - [ ] **Repo `spark-template` séparé vs branche** : voir Phase 5.
 
 ---
@@ -247,4 +247,5 @@ Le repo `spark-kit/templates` doit pointer vers ces docs, pas les recopier.
 | 2026-05-06 | 0 | Création de `INCIDENTS.md` + archive INC-2026-05-05 (NocoDB / `NC_DB_JSON`) et incident wiki Colima sizing |
 | 2026-05-06 | 0 | Cadrage couche méthodologique : §2.2 rôle des composants (NocoDB ≠ source de vérité) + §4bis 3 chantiers A/B/C, focus B en prochaine session |
 | 2026-05-06 | B | Chantier B amorcé : `methodology/README.md` + `ingest-legacy-docs.md` + `prd-template.md`. `poc-from-prd.md` reste bloqué par chantier A. |
-| 2026-05-06 | — | Migration vers org GitHub `spark-kit` : transfert des 2 repos, création de `spark-kit/kyklos` (option B = 1 repo client avec infra/ + discovery/ + LESSONS-LEARNED.md + CLAUDE.md), extraction de `methodology/` vers le repo dédié [`spark-kit/templates`](https://github.com/spark-kit/templates) (privé pour l'instant, public à terme). Méthodologie supprimée de ce repo. |
+| 2026-05-06 | — | Migration vers org GitHub `spark-kit` : transfert des 2 repos, création du 1er repo client suivant l'option B (1 repo par client avec `infra/` + `discovery/` + `LESSONS-LEARNED.md` + `CLAUDE.md`), extraction de `methodology/` vers le repo dédié [`spark-kit/templates`](https://github.com/spark-kit/templates) (privé pour l'instant, public à terme). Méthodologie supprimée de ce repo. |
+| 2026-05-06 | — | Anonymisation : suppression des références nominatives au 1er site dans ce README et dans `INCIDENTS.md` (placeholders `<client>` / `<legacy-site>` / faux nom `acme` selon contexte). |
