@@ -23,6 +23,7 @@ Distinction critique à garder à l'œil — on a confondu les deux pendant le b
 
 ## 2. Vision
 
+### 2.1 Déploiement d'un site
 À terme, déployer un nouveau site Spark = 3 étapes :
 
 ```bash
@@ -33,6 +34,37 @@ cd spark-acme
 ```
 
 Reste manuel (1× par compte CF) : `cloudflared login`.
+
+### 2.2 Rôle des composants — la donnée client
+
+⚠️ **Architecture critique à ne pas oublier** (cf. [[manifeste-spark]] : *"Pas un remplacement. Le CRM reste. L'ERP reste. Le fichier Excel qui marche depuis 2012 reste."*) :
+
+```
+   Systèmes métier client (CRM, ERP, WMS, Phone Check, Pennylane, Sheets...)
+                        ↑ source de vérité business — INTOUCHABLE
+                        │   API / webhook / export CSV
+                        │   (n8n "ouvre certaines portes" contrôlées)
+                        ↓
+   ┌─────────────────────────────────────────┐
+   │ Spark (Mac Mini chez le client)          │
+   │                                          │
+   │  n8n  (bridge contrôlé, plomberie)       │
+   │   ↕                                      │
+   │  NocoDB (bac à sable / staging /         │
+   │          écrans métier / nouvelles       │
+   │          tables qui n'existaient pas)    │
+   │   ↕                                      │
+   │  Utilisateurs métier                     │
+   └─────────────────────────────────────────┘
+```
+
+**NocoDB n'est jamais la source de vérité business.** C'est :
+- un **cache/staging** quand la donnée existe dans un legacy
+- la **source pour cette donnée précise** quand elle n'existait nulle part avant (ex: WMS d'un atelier qui n'avait que du papier — cas Kyklos)
+
+**n8n est le bridge contrôlé** : il ouvre des portes choisies vers les sources de vérité, pas un proxy ouvert.
+
+**Spark vit par playbooks** — chaque déploiement client assemble un sous-ensemble de playbooks selon ses besoins (cf. niveaux 1-7 du manifeste).
 
 ---
 
@@ -114,6 +146,71 @@ Pré-requis manuel à conserver : `cloudflared login` interactif (1× par compte
 
 ---
 
+## 4bis. Couche méthodologique — production de playbooks par client
+
+Axe **orthogonal** aux phases 1-5 ci-dessus (qui concernent l'infrastructure de la kit). Ici on parle du **moteur** qui transforme les besoins d'un client donné en playbooks Spark déployables.
+
+### Le flux cible
+```
+  Doc des logiciels legacy du client + questionnaire onboarding (existant — wiki Spark)
+                                  │
+                                  ▼
+                          Ingestion structurée
+                          (fiches-logiciel : API, exports, schémas, contraintes)
+                                  │
+                                  ▼
+                          PRD du POC à construire
+                          (format inspiré du PRD veille du wiki)
+                                  │
+                                  ▼
+                  Assemblage de playbooks Spark
+                  (briques d'intégration n8n + tables NocoDB + écrans)
+                                  │
+                                  ▼
+                          Déploiement & itération
+```
+
+### Trois chantiers parallèles
+
+#### Chantier A — Patterns d'intégration réutilisables (`spark-kit/playbooks/`)
+Bibliothèque de **briques** assemblables :
+- `n8n-nocodb-bridge` — pattern de base (auth, CRUD, webhooks NocoDB → n8n)
+- `legacy-api-pull` — polling API legacy → NocoDB (delta, idempotence)
+- `legacy-csv-import` — import périodique CSV → NocoDB
+- `n8n-webhook-out` — NocoDB row change → API externe
+- `secrets-vault` — convention credentials côté n8n
+- (autres au fur et à mesure)
+
+#### Chantier B — Méthodologie ingest → PRD → POC (`spark-kit/methodology/`)
+Le **flux** que l'agent (Claude / consultant) suit pour transformer une découverte client en livrable :
+- `ingest-legacy-docs.md` — comment digérer la doc d'un legacy (PDF, web, captures, schémas). Format de fiche-logiciel cible.
+- `prd-template.md` — template PRD POC (modèle = `wiki/topics/veille-prd.md` qui est très bien structuré)
+- `poc-from-prd.md` — du PRD → choix des briques playbooks → implémentation
+- S'articule avec `wiki/topics/questionnaire-onboarding.md` (déjà existant côté wiki Spark, ne pas le dupliquer)
+
+#### Chantier C — Outillage Claude (`spark-kit/skills/` et `spark-kit/mcp/`)
+Pour que l'agent travaille efficacement sur les instances réelles :
+- **MCP n8n** — branché sur l'instance kyklos (et futures), avec token API. Décidé : OK selon expérience utilisateur.
+- **Skill NocoDB** — n'existe pas, à créer. Pas de MCP NocoDB ; on se contente de l'API.
+- **Skills n8n** — déjà chargées (7 skills `n8n-*` disponibles). Rien à faire.
+
+### Focus actuel
+**Chantier B prioritaire** parce que :
+- L'utilisateur fonctionne déjà par PRD/specs structurés (cf. PRD veille). Le pipeline méthodologique est l'os du projet.
+- A et C n'ont pas de valeur isolée — ils existent pour servir un POC client, qui sort de B.
+- A et C s'enrichiront naturellement *à l'occasion* d'un premier vrai POC (ingestion d'un legacy → PRD → playbook → on en tire les briques génériques).
+
+### Repères avec le wiki Spark
+Ne pas dupliquer ce qui existe :
+- `wiki/topics/manifeste-spark.md` — vision, niveaux 1-7, thèse IA → **référence**
+- `wiki/topics/architecture-technique.md` — stack technique → **référence**
+- `wiki/topics/questionnaire-onboarding.md` — découverte client → **entrée du flux méthodologique**
+- `wiki/topics/veille-prd.md` — modèle de PRD → **gabarit pour `prd-template.md`**
+
+`spark-kit/methodology/` doit pointer vers ces docs, pas les recopier.
+
+---
+
 ## 5. Décisions déjà figées (à ne pas re-débattre)
 
 | Décision | Source / Raison |
@@ -147,3 +244,4 @@ Pré-requis manuel à conserver : `cloudflared login` interactif (1× par compte
 |---|---|---|
 | 2026-05-06 | 0 | Création de ce document |
 | 2026-05-06 | 0 | Création de `INCIDENTS.md` + archive INC-2026-05-05 (NocoDB / `NC_DB_JSON`) et incident wiki Colima sizing |
+| 2026-05-06 | 0 | Cadrage couche méthodologique : §2.2 rôle des composants (NocoDB ≠ source de vérité) + §4bis 3 chantiers A/B/C, focus B en prochaine session |
