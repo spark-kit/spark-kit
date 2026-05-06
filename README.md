@@ -183,10 +183,11 @@ Bibliothèque de **briques** assemblables :
 
 #### Chantier B — Méthodologie ingest → PRD → POC (`spark-kit/methodology/`)
 Le **flux** que l'agent (Claude / consultant) suit pour transformer une découverte client en livrable :
-- `ingest-legacy-docs.md` — comment digérer la doc d'un legacy (PDF, web, captures, schémas). Format de fiche-logiciel cible.
-- `prd-template.md` — template PRD POC (modèle = `wiki/topics/veille-prd.md` qui est très bien structuré)
-- `poc-from-prd.md` — du PRD → choix des briques playbooks → implémentation
-- S'articule avec `wiki/topics/questionnaire-onboarding.md` (déjà existant côté wiki Spark, ne pas le dupliquer)
+- ✅ [`methodology/README.md`](methodology/README.md) — vue d'ensemble du pipeline + articulation avec wiki
+- ✅ [`methodology/ingest-legacy-docs.md`](methodology/ingest-legacy-docs.md) — procédure d'ingestion de doc legacy → fiche-logiciel structurée
+- ✅ [`methodology/prd-template.md`](methodology/prd-template.md) — gabarit PRD POC (inspiré de `wiki/topics/veille-prd.md`)
+- ⏳ `methodology/poc-from-prd.md` — du PRD → assemblage de playbooks → implémentation. Bloqué par chantier A (briques `spark-kit/playbooks/`).
+- S'articule avec `wiki/topics/questionnaire-onboarding.md` (existant côté wiki Spark, ne pas dupliquer)
 
 #### Chantier C — Outillage Claude (`spark-kit/skills/` et `spark-kit/mcp/`)
 Pour que l'agent travaille efficacement sur les instances réelles :
@@ -245,3 +246,4 @@ Ne pas dupliquer ce qui existe :
 | 2026-05-06 | 0 | Création de ce document |
 | 2026-05-06 | 0 | Création de `INCIDENTS.md` + archive INC-2026-05-05 (NocoDB / `NC_DB_JSON`) et incident wiki Colima sizing |
 | 2026-05-06 | 0 | Cadrage couche méthodologique : §2.2 rôle des composants (NocoDB ≠ source de vérité) + §4bis 3 chantiers A/B/C, focus B en prochaine session |
+| 2026-05-06 | B | Chantier B amorcé : `methodology/README.md` + `ingest-legacy-docs.md` + `prd-template.md`. `poc-from-prd.md` reste bloqué par chantier A. |
