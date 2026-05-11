@@ -80,18 +80,40 @@ La stack embarque deux couches complementaires. **Utiliser les MCP pour interagi
 
 ## Configuration Claude Code
 
-Le repo entreprise contient un `.mcp.json` (gitignored) qui pointe vers les wrapper scripts :
+Le repo entreprise contient un `.mcp.json` (gitignored) a la racine qui pointe vers les wrapper scripts :
 
 ```json
 {
   "mcpServers": {
-    "n8n": { "command": "infra/scripts/mcp-n8n.sh" },
-    "nocodb": { "command": "infra/scripts/mcp-nocodb.sh" }
+    "n8n-mcp": {
+      "command": "bash",
+      "args": ["infra/scripts/mcp-n8n.sh"]
+    },
+    "nocodb-mcp": {
+      "command": "bash",
+      "args": ["infra/scripts/mcp-nocodb.sh"]
+    }
   }
 }
 ```
 
-Les scripts sourcent `infra/.env` et lancent `docker run --network <project>_spark` en mode stdio. Au demarrage d'une session, les MCP apparaissent automatiquement comme tool providers.
+Les scripts sourcent `infra/.env` et lancent `docker run --network spark_spark` en mode stdio (`name: spark` dans le compose → reseau `spark_spark`). Au demarrage d'une session, les MCP apparaissent automatiquement comme tool providers.
+
+### Installation des skills
+
+Les skills sont globales (une seule fois par poste, dans `~/.claude/skills/`) :
+
+```bash
+npx @anthropic-ai/claude-code skills add nocodb/agent-skills
+npx @anthropic-ai/claude-code skills add n8n/agent-skills
+```
+
+### Obtention des cles API
+
+Apres le premier acces aux apps :
+1. **n8n** : Settings > API > Create API Key → `N8N_API_KEY` dans `.env`
+2. **NocoDB** : Team & Settings > Tokens > Add New Token → `NOCODB_API_TOKEN` dans `.env`
+3. Relancer `docker compose up -d` pour que les MCP prennent les cles.
 
 ---
 
@@ -135,7 +157,8 @@ Les scripts sourcent `infra/.env` et lancent `docker run --network <project>_spa
 │   ├── docker-compose.yml
 │   ├── config/
 │   │   ├── Caddyfile
-│   │   └── postgres/init-db.sh
+│   │   ├── postgres/init-db.sh
+│   │   └── nocodb-mcp/Dockerfile
 │   └── scripts/
 │       ├── tunnel-up.sh      creation routes + CNAMEs CF
 │       ├── tunnel-down.sh    suppression routes + CNAMEs
