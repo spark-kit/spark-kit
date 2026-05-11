@@ -13,7 +13,8 @@
 - `.env.example` couvre les 10 variables necessaires
 - Scripts `tunnel-up.sh` / `tunnel-down.sh` idempotents, edition par bloc marque
 - Pattern A (local-managed) verrouille et documente
-- Postgres + n8n + NocoDB + Caddy + Uptime-Kuma fonctionnels
+- Postgres + n8n + NocoDB + Caddy fonctionnels
+- Cloudflare Tunnel (pattern A, local-managed) integre des le deploiement
 
 ### Encore hardcode / a template-iser
 - `name: <legacy-site>` dans compose → prefixe les **volumes** et les **containers**

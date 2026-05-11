@@ -1,0 +1,175 @@
+# CLAUDE.md — Guide agent pour un deploiement Spark
+
+> Toi (Claude) qui debarques sur un repo Spark : voici l'essentiel avant d'ecrire ou modifier quoi que ce soit.
+
+---
+
+## Ce qu'est Spark
+
+Spark est un **side-stack** : un Mac Mini pose a cote des systemes existants du client. Il ne remplace rien. Le CRM reste. L'ERP reste. Le fichier Excel qui marche depuis 2012 reste. Spark les fait parler entre eux.
+
+**La source de verite business est toujours le systeme metier du client** (Phone Check, Pennylane, Google Sheets, ERP, WMS...). NocoDB n'est jamais la source de verite business — c'est un bac a sable, un staging, une surface pour des donnees qui n'existaient nulle part avant. n8n est un pont controle qui ouvre des portes choisies vers les sources metier.
+
+---
+
+## Vocabulaire critique
+
+| Terme | Sens |
+|-------|------|
+| **Spark** | La kit / methode (org GitHub `spark-kit`). Pas un site client. |
+| **Site** | Un deploiement Spark concret : 1 Mac Mini, 1 client, 1 domaine, 1 repo. |
+| **`SPARK_PREFIX`** | Slug par-site qui forme les hostnames (`<prefix>-<service>.<domain>`). Ce n'est PAS le nom de la kit. |
+| **Playbook** | Brique d'integration assemblable (workflow n8n + tables NocoDB + config). |
+
+---
+
+## Stack technique
+
+| Service | Role | Port interne |
+|---------|------|-------------|
+| n8n | Orchestration, workflows | 5678 |
+| NocoDB | Base visuelle, ecrans metier | 8080 |
+| PostgreSQL 16 | Base relationnelle partagee (users separes : `n8n`, `nocodb`) | 5432 |
+| Caddy | Reverse proxy, route le trafic | 80 (127.0.0.1 uniquement) |
+| cloudflared | Tunnel Cloudflare (TLS, acces distant) | host, pas Docker |
+
+Caddy a `auto_https off` — c'est Cloudflare qui gere le TLS. Caddy injecte `X-Forwarded-Proto https` pour que les apps croient etre en HTTPS.
+
+---
+
+## Outillage agent : skills + MCP
+
+La stack embarque deux couches complementaires. **Utiliser les MCP pour interagir avec les instances live, les skills pour la reference API et les patterns.**
+
+### n8n
+
+**Skills** (7 skills `n8n-*`) :
+- `n8n-node-configuration` — configuration des nodes par type et operation
+- `n8n-workflow-patterns` — patterns architecturaux prouves (webhook, CRUD, scheduling, AI agents)
+- `n8n-expression-syntax` — syntaxe `{{ }}`, `$json`, `$node`, troubleshooting expressions
+- `n8n-code-javascript` — Code nodes JS, `$input`, `$helpers`, `DateTime`
+- `n8n-code-python` — Code nodes Python, `_input`, `_json`, limitations
+- `n8n-validation-expert` — interpretation des erreurs de validation
+- `n8n-mcp-tools-expert` — guide d'utilisation des outils MCP n8n
+
+**MCP** (`n8n-mcp`) :
+- Lecture/ecriture de workflows, activation, executions
+- Se connecte a `http://n8n:5678` en interne Docker
+- Script wrapper : `infra/scripts/mcp-n8n.sh`
+
+### NocoDB
+
+**Skill** (`nocodb`) :
+- API v3 complete : data CRUD, meta management, links, filters, sorts, attachments
+- Inclut un script CLI `nocodb.sh` pour operations en ligne de commande
+- Syntaxe des filtres `where` : `(field,op,value)~and(field2,op2,value2)`
+
+**MCP** (`nocodb-mcp`) :
+- Lecture/ecriture de records, schema, tables
+- Se connecte a `http://nocodb:8080` en interne Docker
+- Script wrapper : `infra/scripts/mcp-nocodb.sh`
+
+### Regles
+
+1. **Ne jamais `curl` une API quand un MCP peut le faire.** Les MCP gerent auth, pagination, format.
+2. **Skills = reference, MCP = action.** Consulter la skill pour comprendre la syntaxe, utiliser le MCP pour executer.
+3. **Charger la skill avant de configurer un node.** `n8n-node-configuration` donne les champs requis par operation — evite les allers-retours.
+4. **Valider avec `n8n-validation-expert`** apres avoir modifie un workflow.
+
+---
+
+## Configuration Claude Code
+
+Le repo client contient un `.mcp.json` (gitignored) qui pointe vers les wrapper scripts :
+
+```json
+{
+  "mcpServers": {
+    "n8n": { "command": "infra/scripts/mcp-n8n.sh" },
+    "nocodb": { "command": "infra/scripts/mcp-nocodb.sh" }
+  }
+}
+```
+
+Les scripts sourcent `infra/.env` et lancent `docker run --network <project>_spark` en mode stdio. Au demarrage d'une session, les MCP apparaissent automatiquement comme tool providers.
+
+---
+
+## Principes de travail
+
+### Donnees
+
+- NocoDB = bac a sable. Le systeme metier = source de verite.
+- Quand une donnee existe deja dans un legacy, NocoDB en est le **cache/staging**.
+- Quand une donnee n'existait nulle part (ex: WMS d'un atelier papier), NocoDB devient la **source pour cette donnee precise**.
+
+### Secrets
+
+- Pas de credential en clair dans le repo — jamais.
+- `.env` est gitignored. Verifier avec `git status` avant tout commit.
+- Les secrets metier (API keys, tokens des logiciels client) vont dans **n8n > Settings > Credentials**, chiffres par `N8N_ENCRYPTION_KEY`.
+- Le `.env` ne contient que les secrets d'infrastructure de la stack.
+
+### Workflows n8n
+
+- Un workflow = une responsabilite claire.
+- Nommer les workflows avec un prefixe explicite : `[SYNC] CRM → NocoDB`, `[ALERT] Stock bas`, `[WEBHOOK] Commande recue`.
+- Tester les workflows en mode manuel avant de les activer.
+- Les credentials sont references par nom, pas par ID — facilite la portabilite.
+
+### Modifications infra
+
+- Travailler dans `infra/`.
+- Tester localement (`docker compose up -d`) avant de committer.
+- Commit avec prefixe : `infra: ...`, `workflow: ...`, `discovery: ...`.
+
+---
+
+## Structure d'un repo client
+
+```
+<client>/
+├── infra/
+│   ├── .env                  secrets (gitignored)
+│   ├── .env.example          template sans secrets
+│   ├── docker-compose.yml
+│   ├── config/
+│   │   ├── Caddyfile
+│   │   └── postgres/init-db.sh
+│   └── scripts/
+│       ├── tunnel-up.sh      creation routes + CNAMEs CF
+│       ├── tunnel-down.sh    suppression routes + CNAMEs
+│       ├── mcp-n8n.sh        wrapper MCP n8n
+│       └── mcp-nocodb.sh     wrapper MCP NocoDB
+├── discovery/
+│   ├── onboarding/           questionnaires client
+│   ├── fiches/               fiches-logiciel legacy
+│   └── prds/                 PRDs des POCs
+├── LESSONS-LEARNED.md        notes operationnelles
+├── CLAUDE.md                 ce fichier, adapte au client
+└── .mcp.json                 config MCP (gitignored)
+```
+
+---
+
+## Pieges connus
+
+### NocoDB — toujours `NC_DB_JSON`, jamais `NC_DB`
+
+La conf URL `NC_DB="pg://...&p=XXX&d=..."` URL-decode le password. Si le password contient `&`, `=`, `+`, `%` → auth fail en boucle. Utiliser `NC_DB_JSON` (objet JSON, pas de parsing URL).
+
+### Sizing Colima
+
+4 GiB par defaut. Si la stack devient lourde ou si des LLMs locaux tournent en parallele → 6+ GiB, mais seulement sur Mac 16 GB+. Diagnostic memoire : `docker run --rm alpine free -h`.
+
+### Tunnel Cloudflare — pattern A
+
+Le YAML cloudflared vit cote hote (`~/.cloudflared/config-*.yml`), edite par `scripts/tunnel-up.sh` via blocs marques `# >>> spark-begin` / `# <<< spark-end`. Ne pas editer manuellement les blocs marques.
+
+---
+
+## Liens
+
+- Meta Spark : https://github.com/spark-kit/spark-kit
+- Templates (gabarits methodologie) : https://github.com/spark-kit/templates
+- Wiki Spark (manifeste, archi, concurrence) : `~/Documents/spark-vault/wiki/`

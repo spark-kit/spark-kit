@@ -27,6 +27,17 @@ Spark transforme un Mac Mini en plateforme d'orchestration locale : connectez vo
 
 Spark ne remplace rien. Le CRM reste. L'ERP reste. Le fichier Excel qui marche depuis 2012 reste. Spark les fait parler entre eux.
 
+### 4 etapes, 30 minutes
+
+```
+1. Preparer le Mac       brew, Colima, pmset             ~10 min
+2. Configurer le site    .env, docker-compose             ~5 min
+3. Lancer la stack       docker compose up -d              ~5 min
+4. Ouvrir le tunnel      cloudflared + DNS Cloudflare     ~10 min
+   ─────────────────────────────────────────────────────
+   → n8n et NocoDB accessibles en HTTPS depuis n'importe ou
+```
+
 ---
 
 ## Stack
@@ -35,11 +46,13 @@ Spark ne remplace rien. Le CRM reste. L'ERP reste. Le fichier Excel qui marche d
 |-----------|------|-------------------|
 | **n8n** | Orchestration, workflows, connexion entre logiciels | Open source, 400+ connecteurs, code quand il faut |
 | **NocoDB** | Base de donnees visuelle (comme Airtable, en local) | Les non-devs peuvent creer des vues et des formulaires |
-| **PostgreSQL 16** | Base relationnelle partagee (n8n + NocoDB) | Un seul backup couvre tout |
-| **Caddy** | Reverse proxy, HTTPS automatique sur le LAN | `tls internal` = zero config certificats |
-| **Uptime Kuma** | Monitoring, alertes si un service tombe | Dashboard visuel, alertes webhook via n8n |
+| **PostgreSQL 16** | Base relationnelle (n8n + NocoDB, users separes) | Un seul backup couvre tout |
+| **Caddy** | Reverse proxy interne | Route le trafic vers les bons services |
+| **Cloudflare Tunnel** | Acces HTTPS distant | TLS gere par Cloudflare, zero cert a gerer, zero port ouvert |
 
 Tout tourne dans Docker via **Colima** (MIT, headless, leger en RAM).
+
+**Securite des secrets** : les identifiants des systemes connectes (API keys, tokens, mots de passe) sont stockes dans le coffre-fort de credentials natif de n8n, chiffres par `N8N_ENCRYPTION_KEY`. Pas de fichier `.env` sauvage avec des secrets metier — le `.env` ne contient que les secrets d'infrastructure de la stack elle-meme.
 
 ---
 
@@ -50,7 +63,7 @@ Tout tourne dans Docker via **Colima** (MIT, headless, leger en RAM).
 | | Minimum | Recommande |
 |---|---------|------------|
 | **Machine** | Mac Mini Apple Silicon | Mac Mini M2/M4 |
-| **RAM** | 8 GB (pas de LLM local) | 16 GB |
+| **RAM** | 8 GB | 16 GB |
 | **Stockage** | 50 GB libres | 100 GB+ |
 | **Reseau** | Ethernet LAN | Ethernet LAN + IP fixe/DHCP reserve |
 
@@ -58,7 +71,14 @@ Tout tourne dans Docker via **Colima** (MIT, headless, leger en RAM).
 
 - macOS 14 (Sonoma) ou superieur
 - Compte administrateur sur la machine
-- (Optionnel) Compte Cloudflare + domaine — pour l'acces distant
+
+### Cloudflare (obligatoire)
+
+- Compte Cloudflare (gratuit)
+- Un domaine dont les nameservers pointent vers Cloudflare
+- `brew install cloudflared`
+
+Le tunnel Cloudflare est le seul moyen d'obtenir du HTTPS propre sans infrastructure externe. Sans lui, n8n refuse les cookies securises et devient quasi inutilisable.
 
 ### Verifications rapides
 
@@ -69,11 +89,7 @@ sw_vers           # macOS 14+
 
 ---
 
-## Installation
-
-Trois etapes : preparer le Mac, configurer le site, lancer la stack.
-
-### Etape 1 — Preparer le Mac
+## Etape 1 — Preparer le Mac
 
 ```bash
 # Auto-reboot apres coupure electrique (critique en usine)
@@ -94,159 +110,195 @@ sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setstealthmode on
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 # Paquets essentiels
-brew install colima docker docker-compose git jq curl htop rsync rclone
+brew install colima docker docker-compose cloudflared git jq curl
 ```
 
 ```bash
-# Demarrer Colima avec le bon dimensionnement
-#   16 GB+ de RAM sur le Mac → 6 GB pour Colima
-#    8 GB de RAM sur le Mac  → 4 GB pour Colima (pas de LLM local possible)
-colima start --cpu 4 --memory 6 --disk 100 --network-address --vm-type vz --vz-rosetta
+# Demarrer Colima
+colima start --cpu 4 --memory 4 --disk 100 --network-address --vm-type vz --vz-rosetta
 
 # Verifier que Docker repond
 docker info
 ```
 
-### Etape 2 — Configurer le site
+---
+
+## Etape 2 — Configurer le site
+
+Tout au long de cette etape, remplacer `acme` par le slug du client et `example.com` par le domaine reel.
+
+### Creer l'arborescence
 
 ```bash
-mkdir -p ~/spark/{config,data,logs,backups}
+mkdir -p ~/spark/{config/postgres,data,logs,backups,scripts}
 cd ~/spark
 ```
 
-Generer les secrets (alphabet URL-safe uniquement — ne jamais utiliser `base64` qui produit des `+/=` incompatibles avec certaines configs) :
+### Generer les secrets
+
+Alphabet URL-safe uniquement — ne jamais utiliser `base64` qui produit des `+/=` incompatibles avec certaines configs :
 
 ```bash
 gen_secret() { LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c "$1"; }
 
 cat > .env <<EOF
-POSTGRES_PASSWORD=$(gen_secret 32)
-N8N_USER=admin
-N8N_PASSWORD=$(gen_secret 24)
-N8N_ENCRYPTION_KEY=$(openssl rand -hex 32)
-NOCODB_JWT_SECRET=$(openssl rand -hex 32)
+# --- Site ---
 SPARK_PREFIX=acme
-SPARK_DOMAIN=spark.local
+SPARK_DOMAIN=example.com
+SPARK_HOST_HTTP_PORT=18080
+
+# --- PostgreSQL ---
+POSTGRES_ROOT_PASSWORD=$(gen_secret 32)
+N8N_DB_PASSWORD=$(gen_secret 32)
+NOCODB_DB_PASSWORD=$(gen_secret 32)
+
+# --- n8n ---
+N8N_ENCRYPTION_KEY=$(openssl rand -hex 32)
+
+# --- NocoDB ---
+NC_AUTH_JWT_SECRET=$(openssl rand -hex 32)
+
+# --- Cloudflare Tunnel (a remplir a l'etape 4) ---
+SPARK_TUNNEL_ID=
+SPARK_TUNNEL_CONFIG=
+CF_API_TOKEN=
+CF_ZONE_ID=
 EOF
 
 chmod 600 .env
 ```
 
-> Remplacer `acme` par le slug du client et `spark.local` par le domaine reel.
+### Creer les fichiers de config
 
-Creer le fichier d'init PostgreSQL :
+**`config/postgres/init-db.sh`** — cree les bases et les utilisateurs separes :
 
 ```bash
-cat > config/init-db.sql <<'SQL'
-CREATE DATABASE n8n;
-CREATE DATABASE nocodb;
-SQL
+cat > config/postgres/init-db.sh <<'INITDB'
+#!/bin/bash
+set -euo pipefail
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-EOSQL
+    CREATE USER n8n WITH ENCRYPTED PASSWORD '${N8N_DB_PASSWORD}';
+    CREATE DATABASE n8n OWNER n8n;
+
+    CREATE USER nocodb WITH ENCRYPTED PASSWORD '${NOCODB_DB_PASSWORD}';
+    CREATE DATABASE nocodb OWNER nocodb;
+EOSQL
+INITDB
+chmod +x config/postgres/init-db.sh
 ```
 
-Creer le Caddyfile :
+**`config/Caddyfile`** — reverse proxy interne, pas de TLS (Cloudflare s'en charge) :
 
 ```bash
 cat > config/Caddyfile <<'CADDY'
-n8n.spark.local {
-    tls internal
-    reverse_proxy n8n:5678
+{
+    auto_https off
 }
-db.spark.local {
-    tls internal
-    reverse_proxy nocodb:8080
+
+http://{$SPARK_PREFIX}-n8n.{$SPARK_DOMAIN} {
+    reverse_proxy n8n:5678 {
+        header_up X-Forwarded-Proto https
+    }
 }
-status.spark.local {
-    tls internal
-    reverse_proxy uptime-kuma:3001
+
+http://{$SPARK_PREFIX}-db.{$SPARK_DOMAIN} {
+    reverse_proxy nocodb:8080 {
+        header_up X-Forwarded-Proto https
+    }
 }
 CADDY
 ```
 
-Creer le `docker-compose.yml` :
+> `header_up X-Forwarded-Proto https` est obligatoire : Caddy recoit du HTTP depuis cloudflared, mais les apps doivent croire qu'elles sont en HTTPS (sinon n8n refuse les cookies securises).
+
+### Creer le docker-compose.yml
 
 ```bash
 cat > docker-compose.yml <<'COMPOSE'
 services:
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "${SPARK_HOST_HTTP_PORT:-80}:80"
-      - "443:443"
-    volumes:
-      - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    networks: [spark]
-
-  n8n:
-    image: n8nio/n8n:1.70.3
-    restart: unless-stopped
-    environment:
-      - N8N_HOST=${SPARK_PREFIX}-n8n.${SPARK_DOMAIN}
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=https
-      - WEBHOOK_URL=https://${SPARK_PREFIX}-n8n.${SPARK_DOMAIN}/
-      - N8N_BASIC_AUTH_ACTIVE=true
-      - N8N_BASIC_AUTH_USER=${N8N_USER}
-      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD}
-      - DB_TYPE=postgresdb
-      - DB_POSTGRESDB_HOST=postgres
-      - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=n8n
-      - DB_POSTGRESDB_USER=postgres
-      - DB_POSTGRESDB_PASSWORD=${POSTGRES_PASSWORD}
-      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
-      - N8N_PROXY_HOPS=2
-      - GENERIC_TIMEZONE=Europe/Paris
-    volumes:
-      - n8n_data:/home/node/.n8n
-    depends_on:
-      postgres: { condition: service_healthy }
-    networks: [spark]
-
-  nocodb:
-    image: nocodb/nocodb:0.260.0
-    restart: unless-stopped
-    environment:
-      - NC_DB_JSON={"client":"pg","connection":{"host":"postgres","port":5432,"user":"postgres","password":"${POSTGRES_PASSWORD}","database":"nocodb"}}
-      - NC_AUTH_JWT_SECRET=${NOCODB_JWT_SECRET}
-      - NC_PUBLIC_URL=https://${SPARK_PREFIX}-db.${SPARK_DOMAIN}
-    volumes:
-      - nocodb_data:/usr/app/data
-    depends_on:
-      postgres: { condition: service_healthy }
-    networks: [spark]
-
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    networks: [spark]
     environment:
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_ROOT_PASSWORD}
+      POSTGRES_DB: postgres
+      N8N_DB_PASSWORD: ${N8N_DB_PASSWORD}
+      NOCODB_DB_PASSWORD: ${NOCODB_DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./config/init-db.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - ./config/postgres/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
-    networks: [spark]
 
-  uptime-kuma:
-    image: louislam/uptime-kuma:1
+  n8n:
+    image: n8nio/n8n:2.19.4
     restart: unless-stopped
-    volumes:
-      - uptime_data:/app/data
     networks: [spark]
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_PASSWORD: ${N8N_DB_PASSWORD}
+      N8N_HOST: ${SPARK_PREFIX}-n8n.${SPARK_DOMAIN}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: https
+      N8N_EDITOR_BASE_URL: https://${SPARK_PREFIX}-n8n.${SPARK_DOMAIN}/
+      WEBHOOK_URL: https://${SPARK_PREFIX}-n8n.${SPARK_DOMAIN}/
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_USER_MANAGEMENT_DISABLED: "false"
+      NODE_ENV: production
+      GENERIC_TIMEZONE: Europe/Paris
+      TZ: Europe/Paris
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  nocodb:
+    image: nocodb/nocodb:latest
+    restart: unless-stopped
+    networks: [spark]
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment:
+      NC_DB_JSON: '{"client":"pg","connection":{"host":"postgres","port":5432,"user":"nocodb","password":"${NOCODB_DB_PASSWORD}","database":"nocodb"}}'
+      NC_AUTH_JWT_SECRET: ${NC_AUTH_JWT_SECRET}
+      NC_PUBLIC_URL: https://${SPARK_PREFIX}-db.${SPARK_DOMAIN}
+    volumes:
+      - nocodb_data:/usr/app/data
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    networks: [spark]
+    ports:
+      - "127.0.0.1:${SPARK_HOST_HTTP_PORT:-18080}:80"
+    environment:
+      SPARK_DOMAIN: ${SPARK_DOMAIN}
+      SPARK_PREFIX: ${SPARK_PREFIX}
+    volumes:
+      - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - n8n
+      - nocodb
 
 volumes:
-  caddy_data:
-  caddy_config:
+  postgres_data:
   n8n_data:
   nocodb_data:
-  postgres_data:
-  uptime_data:
+  caddy_data:
+  caddy_config:
 
 networks:
   spark:
@@ -254,103 +306,203 @@ networks:
 COMPOSE
 ```
 
-### Etape 3 — Lancer et verifier
+Points cles :
+- Caddy ecoute sur `127.0.0.1:18080` — pas accessible depuis le reseau, uniquement via cloudflared
+- PostgreSQL cree des **utilisateurs separes** (n8n, nocodb) avec des mots de passe distincts
+- NocoDB utilise `NC_DB_JSON` (objet) et non `NC_DB` (URL) — evite les crashloops si le password contient des caracteres speciaux
+
+---
+
+## Etape 3 — Lancer la stack
 
 ```bash
-docker compose up -d --wait
+cd ~/spark
+docker compose up -d
 ```
 
-Attendre 15 secondes que les services demarrent, puis verifier :
+Verifier que les services repondent (attendre ~15s) :
 
 ```bash
-for svc in n8n:5678 nocodb:8080 uptime-kuma:3001; do
+for svc in n8n:5678 nocodb:8080; do
   name="${svc%%:*}" port="${svc##*:}"
-  code=$(curl -sk -o /dev/null -w "%{http_code}" "http://localhost:$port" 2>/dev/null || echo "000")
+  code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port" 2>/dev/null || echo "000")
   printf "  %-15s %s\n" "$name" "$([[ $code =~ ^(200|301|302)$ ]] && echo 'OK' || echo "FAIL ($code)")"
 done
 ```
 
-### Configurer le DNS local
+A ce stade, les services tournent mais ne sont accessibles que depuis le Mac lui-meme (port 18080 sur 127.0.0.1). L'etape suivante ouvre l'acces HTTPS.
 
-Sur chaque poste qui doit acceder a Spark, ajouter dans `/etc/hosts` :
+---
+
+## Etape 4 — Ouvrir le tunnel Cloudflare
+
+Le tunnel Cloudflare cree une connexion sortante securisee entre le Mac et le reseau Cloudflare. Le trafic arrive en HTTPS chez CF, transite par le tunnel chiffre, et atterrit sur Caddy en HTTP local. Aucun port entrant a ouvrir, aucun certificat a gerer.
 
 ```
-<IP_DU_MAC>  n8n.spark.local db.spark.local status.spark.local
+Internet → Cloudflare Edge (HTTPS) → tunnel chiffre → cloudflared (Mac) → Caddy :18080 → n8n/NocoDB
 ```
 
-Recuperer l'IP du Mac :
+### 4.1 — Authentification Cloudflare (une seule fois)
 
 ```bash
-ipconfig getifaddr en0
+cloudflared login
 ```
 
-### Premier acces
+Cela ouvre le navigateur et genere `~/.cloudflared/cert.pem`.
+
+### 4.2 — Creer le tunnel
+
+```bash
+cloudflared tunnel create spark-acme
+```
+
+> Remplacer `acme` par le slug du client. La commande affiche un UUID (ex: `a1b2c3d4-...`) et cree `~/.cloudflared/<UUID>.json`.
+
+### 4.3 — Creer la config du tunnel
+
+```bash
+TUNNEL_ID="<UUID affiche ci-dessus>"
+
+cat > ~/.cloudflared/config-spark.yml <<EOF
+tunnel: $TUNNEL_ID
+credentials-file: $HOME/.cloudflared/$TUNNEL_ID.json
+
+ingress:
+  - hostname: acme-n8n.example.com
+    service: http://localhost:18080
+  - hostname: acme-db.example.com
+    service: http://localhost:18080
+  - service: http_status:404
+EOF
+```
+
+> Adapter les hostnames : `<prefix>-<service>.<domain>`. Le pattern single-level (`acme-n8n.example.com`) est obligatoire pour profiter du Universal SSL gratuit de CF.
+
+### 4.4 — Creer les DNS
+
+```bash
+cloudflared tunnel route dns spark-acme acme-n8n.example.com
+cloudflared tunnel route dns spark-acme acme-db.example.com
+```
+
+Ou via l'API CF pour plus de controle (voir `scripts/tunnel-up.sh`).
+
+### 4.5 — Lancer cloudflared
+
+```bash
+cloudflared tunnel --config ~/.cloudflared/config-spark.yml run
+```
+
+Pour un fonctionnement permanent (survit aux redemarrages), installer un LaunchAgent :
+
+```bash
+cat > ~/Library/LaunchAgents/com.spark.cloudflared.plist <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.spark.cloudflared</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/homebrew/bin/cloudflared</string>
+        <string>tunnel</string>
+        <string>--config</string>
+        <string>${HOME}/.cloudflared/config-spark.yml</string>
+        <string>run</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>${HOME}/spark/logs/cloudflared.log</string>
+    <key>StandardErrorPath</key>
+    <string>${HOME}/spark/logs/cloudflared.err</string>
+</dict>
+</plist>
+PLIST
+
+launchctl load ~/Library/LaunchAgents/com.spark.cloudflared.plist
+```
+
+### 4.6 — Mettre a jour le .env
+
+Completer les variables tunnel dans `~/spark/.env` :
+
+```bash
+SPARK_TUNNEL_ID=<UUID>
+SPARK_TUNNEL_CONFIG=~/.cloudflared/config-spark.yml
+CF_API_TOKEN=<token avec scope Zone:DNS:Edit>
+CF_ZONE_ID=<ID de la zone parente>
+```
+
+### Verifier
+
+```bash
+curl -sI https://acme-n8n.example.com | head -5
+curl -sI https://acme-db.example.com | head -5
+```
+
+Les deux doivent repondre en HTTPS avec un status 200 ou 302.
+
+---
+
+## Premier acces
 
 | Service | URL | Identifiants |
 |---------|-----|-------------|
-| **n8n** | `https://n8n.spark.local` | voir `.env` (`N8N_USER` / `N8N_PASSWORD`) |
-| **NocoDB** | `https://db.spark.local` | creer au premier acces |
-| **Uptime Kuma** | `https://status.spark.local` | creer au premier acces |
+| **n8n** | `https://<prefix>-n8n.<domain>` | Creer le compte owner au premier acces |
+| **NocoDB** | `https://<prefix>-db.<domain>` | Creer le compte admin au premier acces |
 
-> Le navigateur affichera un avertissement de certificat (self-signed). C'est normal — accepter et continuer.
+Au premier acces, n8n demande de creer un compte owner. Ce compte est le seul admin — noter l'email et le mot de passe.
+
+Les secrets des systemes metier (API keys, tokens des logiciels du client) seront ensuite stockes dans **n8n > Settings > Credentials** — chiffres en base par `N8N_ENCRYPTION_KEY`, jamais en clair dans des fichiers.
 
 ---
 
-## Architecture interne
+## Architecture
 
 ```
-┌───────────────────────────────────────────────┐
-│                Mac Mini (Spark)                │
-│                                               │
-│  ┌─────────┐   ┌─────────┐   ┌────────────┐  │
-│  │  Caddy   │   │  n8n    │   │  NocoDB    │  │
-│  │ :80/:443 │──▸│ :5678   │   │  :8080     │  │
-│  └─────────┘   └────┬────┘   └─────┬──────┘  │
-│       │              │             │          │
-│       │         ┌────▼─────────────▼────┐     │
-│       │         │     PostgreSQL 16     │     │
-│       │         │     :5432             │     │
-│       │         │   bases: n8n, nocodb  │     │
-│       │         └───────────────────────┘     │
-│       │                                       │
-│       │         ┌───────────────────────┐     │
-│       └────────▸│    Uptime Kuma        │     │
-│                 │    :3001              │     │
-│                 └───────────────────────┘     │
-│                                               │
-│  Volumes Docker : n8n_data, nocodb_data,      │
-│  postgres_data, uptime_data, caddy_*          │
-└───────────────────────────────────────────────┘
+                    Internet
+                       │
+                       ▼
+              Cloudflare Edge (HTTPS)
+                       │
+                 tunnel chiffre
+                       │
+                       ▼
+┌──────────────────────────────────────────────┐
+│              Mac Mini (Spark)                │
+│                                              │
+│   cloudflared (host, LaunchAgent)             │
+│        │                                     │
+│        ▼ http://127.0.0.1:18080              │
+│   ┌─────────┐                                │
+│   │  Caddy   │ reverse proxy                 │
+│   └────┬─────┘                               │
+│        │         ┌─────────┐  ┌───────────┐  │
+│        ├────────▸│  n8n    │  │  NocoDB    │  │
+│        │         │  :5678  │  │  :8080     │  │
+│        │         └────┬────┘  └─────┬─────┘  │
+│        │              │             │        │
+│        │         ┌────▼─────────────▼────┐   │
+│        │         │    PostgreSQL 16      │   │
+│        │         │    users: n8n, nocodb │   │
+│        │         └──────────────────────┘   │
+│                                              │
+│   Volumes: n8n_data, nocodb_data,            │
+│   postgres_data, caddy_*                     │
+└──────────────────────────────────────────────┘
 ```
 
 **Choix structurants** :
-- Une seule instance PostgreSQL pour n8n + NocoDB → un `pg_dumpall` sauvegarde tout
-- Caddy `tls internal` → HTTPS sur le LAN sans cert externe
+- Caddy ecoute sur `127.0.0.1` uniquement — pas d'acces reseau direct, tout passe par le tunnel
+- Cloudflare gere le TLS et les certificats — zero config cote Mac
+- Utilisateurs PostgreSQL separes (n8n, nocodb) avec mots de passe distincts
 - `restart: unless-stopped` + `pmset autorestart 1` → la stack survit aux coupures electriques
-- Images Docker epinglees (jamais `latest`) → pas de surprise a la mise a jour
-- Colima (MIT, headless) → pas de licence commerciale, pas de GUI
-
----
-
-## Acces distant (optionnel)
-
-Pour exposer Spark sur internet (support a distance, acces hors LAN), Spark utilise **Cloudflare Tunnel** en mode local-managed (pattern A).
-
-```
-Internet → Cloudflare Edge (TLS) → cloudflared (sur le Mac) → Caddy → services
-```
-
-Le tunnel est gere par un fichier YAML local (pas par le dashboard CF). Les scripts `tunnel-up.sh` / `tunnel-down.sh` gerent l'ajout et le retrait de routes.
-
-Pre-requis supplementaires :
-- Domaine pointe vers Cloudflare (nameservers CF)
-- `brew install cloudflared`
-- `cloudflared login` (une fois, interactif)
-- Token API CF avec scope `Zone:DNS:Edit` sur la zone du domaine
-
-Le hostname suit le pattern **single-level** : `<prefix>-<service>.<domain>` (ex: `acme-n8n.example.com`). Le Universal SSL gratuit de CF couvre ce format.
-
-> Details complets dans la documentation d'architecture.
+- Images Docker epinglees (pas de `latest` sauf NocoDB)
+- Secrets metier dans le coffre n8n Credentials, pas dans des fichiers `.env`
 
 ---
 
@@ -360,13 +512,13 @@ Le hostname suit le pattern **single-level** : `<prefix>-<service>.<domain>` (ex
 
 **Symptome** : NocoDB redemarre en boucle, Caddy renvoie 502.
 
-**Cause probable** : le mot de passe PostgreSQL contient des caracteres speciaux (`+`, `/`, `=`, `&`, `%`) qui cassent le parsing URL.
+**Cause probable** : le mot de passe PostgreSQL contient des caracteres speciaux (`+`, `/`, `=`, `&`, `%`).
 
-**Solution** : utiliser `NC_DB_JSON` (format objet) au lieu de `NC_DB` (format URL). C'est deja fait dans le `docker-compose.yml` ci-dessus. Si vous avez un ancien `.env`, regenerer le mot de passe avec des caracteres URL-safe uniquement.
+**Solution** : verifier que `NC_DB_JSON` est utilise (pas `NC_DB`). Regenerer le password avec des caracteres URL-safe uniquement (`A-Za-z0-9`).
 
 ### Containers en restart loop silencieux
 
-**Symptome** : containers qui sortent avec code 0, redemarrent toutes les ~60s. Pas de stack trace dans les logs. n8n affiche `Task runner connection attempt failed with status code 403`.
+**Symptome** : containers qui sortent avec code 0, redemarrent toutes les ~60s. n8n affiche `Task runner connection attempt failed with status code 403`.
 
 **Cause probable** : Colima manque de memoire.
 
@@ -380,15 +532,13 @@ colima stop
 colima start --cpu 4 --memory 6 --disk 100
 ```
 
-### Erreur cookie / auth derriere reverse proxy
+### n8n affiche "secure cookie" error
 
-**Symptome** : n8n affiche *"Your n8n server is configured to use a secure cookie, however you are either visiting this via an insecure URL"*.
+**Symptome** : *"Your n8n server is configured to use a secure cookie, however you are either visiting this via an insecure URL"*.
 
-**Cause** : la chaine de proxy (Cloudflare → cloudflared → Caddy → n8n) perd le header `X-Forwarded-Proto`.
+**Cause** : `X-Forwarded-Proto https` n'est pas propage jusqu'a n8n.
 
-**Solution** : deux choses a verifier :
-1. Caddy force le header : `header_up X-Forwarded-Proto https` dans le bloc `reverse_proxy`
-2. n8n est configure avec `N8N_PROXY_HOPS=2` (cloudflared + Caddy)
+**Solution** : verifier que le Caddyfile contient `header_up X-Forwarded-Proto https` dans chaque bloc `reverse_proxy`.
 
 ---
 
@@ -424,13 +574,11 @@ Spark est ne d'une conviction : **les petites entreprises meritent l'industrie 4
 
 Siemens et Dassault Systemes ont construit l'usine connectee pour les grands groupes. Les PME de 10 a 100 personnes n'ont ni le budget ni les equipes pour ca. Spark est leur porte d'entree.
 
-**Principes** :
 - **Pas a pas, pas big bang** — on resout un probleme concret en une semaine, puis un autre
 - **Side-stack** — on ne touche pas au systeme qui tourne, on pose un deuxieme cerveau a cote
 - **La donnee reste chez le client** — Mac Mini sur le LAN, pas de cloud obligatoire
 - **La plomberie avant l'IA** — connecter les logiciels existants est le prerequis, l'IA viendra apres
-
-> Version complete : [Manifeste Spark](https://github.com/spark-kit/spark-kit/wiki/manifeste)
+- **Les secrets au coffre** — les credentials metier dans n8n, pas dans des fichiers
 
 ---
 
