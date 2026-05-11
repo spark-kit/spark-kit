@@ -2,15 +2,15 @@
 
 **La plomberie numerique pour PME industrielles.**
 
-Spark transforme un Mac Mini en plateforme d'orchestration locale : connectez vos logiciels existants, automatisez vos flux, donnez a vos equipes des outils qu'elles utilisent vraiment — sans toucher a ce qui marche deja.
+Spark transforme un Mac Mini en plateforme d'orchestration locale : prototypez des connexions entre vos logiciels existants, automatisez vos flux, donnez a vos equipes des outils qu'elles utilisent vraiment — sans toucher a ce qui marche deja.
 
 ```
-  Logiciels metier du client (CRM, ERP, WMS, facturation, support...)
+  Logiciels metier (CRM, ERP, WMS, facturation, support...)
                        |  source de verite business — INTOUCHABLE
                        |  API / webhook / export CSV
                        v
   ┌──────────────────────────────────────┐
-  │  Spark  (Mac Mini chez le client)    │
+  │  Spark  (Mac Mini dans l'entreprise)  │
   │                                      │
   │  n8n       pont controle entre les   │
   │            logiciels existants       │
@@ -25,7 +25,7 @@ Spark transforme un Mac Mini en plateforme d'orchestration locale : connectez vo
   └──────────────────────────────────────┘
 ```
 
-Spark ne remplace rien. Le CRM reste. L'ERP reste. Le fichier Excel qui marche depuis 2012 reste. Spark les fait parler entre eux.
+Spark ne remplace rien. Le CRM reste. L'ERP reste. Le fichier Excel qui marche depuis 2012 reste. Spark les fait parler entre eux — et le jour ou vous deciderez d'en changer un, les connexions seront deja cartographiees.
 
 ### 4 etapes, 30 minutes
 
@@ -115,7 +115,7 @@ brew install colima docker docker-compose cloudflared git jq curl
 
 ```bash
 # Demarrer Colima
-colima start --cpu 4 --memory 4 --disk 100 --network-address --vm-type vz --vz-rosetta
+colima start --cpu 4 --memory 4 --disk 60 --network-address --vm-type vz --vz-rosetta
 
 # Verifier que Docker repond
 docker info
@@ -125,7 +125,7 @@ docker info
 
 ## Etape 2 — Configurer le site
 
-Tout au long de cette etape, remplacer `acme` par le slug du client et `example.com` par le domaine reel.
+Tout au long de cette etape, remplacer `acme` par le slug de l'entreprise et `example.com` par le domaine reel.
 
 ### Creer l'arborescence
 
@@ -356,7 +356,7 @@ Cela ouvre le navigateur et genere `~/.cloudflared/cert.pem`.
 cloudflared tunnel create spark-acme
 ```
 
-> Remplacer `acme` par le slug du client. La commande affiche un UUID (ex: `a1b2c3d4-...`) et cree `~/.cloudflared/<UUID>.json`.
+> Remplacer `acme` par le slug de l'entreprise. La commande affiche un UUID (ex: `a1b2c3d4-...`) et cree `~/.cloudflared/<UUID>.json`.
 
 ### 4.3 — Creer la config du tunnel
 
@@ -457,7 +457,7 @@ Les deux doivent repondre en HTTPS avec un status 200 ou 302.
 
 Au premier acces, n8n demande de creer un compte owner. Ce compte est le seul admin — noter l'email et le mot de passe.
 
-Les secrets des systemes metier (API keys, tokens des logiciels du client) seront ensuite stockes dans **n8n > Settings > Credentials** — chiffres en base par `N8N_ENCRYPTION_KEY`, jamais en clair dans des fichiers.
+Les secrets des systemes metier (API keys, tokens des logiciels de l'entreprise) seront ensuite stockes dans **n8n > Settings > Credentials** — chiffres en base par `N8N_ENCRYPTION_KEY`, jamais en clair dans des fichiers.
 
 ---
 
@@ -529,7 +529,7 @@ docker run --rm alpine free -h
 Si `available` < 200 MB → redimensionner :
 ```bash
 colima stop
-colima start --cpu 4 --memory 6 --disk 100
+colima start --cpu 4 --memory 6 --disk 60
 ```
 
 ### n8n affiche "secure cookie" error
@@ -547,7 +547,7 @@ colima start --cpu 4 --memory 6 --disk 100
 | Terme | Sens |
 |-------|------|
 | **Spark** | Le kit / template — ce projet |
-| **Site** | Un deploiement Spark concret : 1 Mac Mini, 1 client, 1 domaine |
+| **Site** | Un deploiement Spark concret : 1 Mac Mini, 1 entreprise, 1 domaine |
 | **`SPARK_PREFIX`** | Slug par-site qui forme les hostnames (`<prefix>-<service>.<domain>`) |
 | **Pattern A** | Tunnel Cloudflare local-managed (config YAML sur le Mac, pas sur le dashboard CF) |
 | **Playbook** | Brique d'integration assemblable (workflow n8n + tables NocoDB + config) |
@@ -560,7 +560,8 @@ colima start --cpu 4 --memory 6 --disk 100
 spark-kit/
 ├── spark-kit        ← ce repo (meta, documentation, incidents)
 ├── templates/       ← methodologie : ingest legacy → PRD → POC
-└── <client>/        ← un repo par deploiement client (prive)
+├── CLAUDE.md        ← guide agent pour travailler avec la stack
+└── <entreprise>/    ← un repo par deploiement (prive)
        ├── infra/           docker-compose, scripts, config
        ├── discovery/       questionnaire, fiches logiciel, PRD
        └── LESSONS-LEARNED.md
@@ -576,9 +577,23 @@ Siemens et Dassault Systemes ont construit l'usine connectee pour les grands gro
 
 - **Pas a pas, pas big bang** — on resout un probleme concret en une semaine, puis un autre
 - **Side-stack** — on ne touche pas au systeme qui tourne, on pose un deuxieme cerveau a cote
-- **La donnee reste chez le client** — Mac Mini sur le LAN, pas de cloud obligatoire
+- **La donnee reste dans l'entreprise** — Mac Mini sur le LAN, pas de cloud obligatoire
 - **La plomberie avant l'IA** — connecter les logiciels existants est le prerequis, l'IA viendra apres
 - **Les secrets au coffre** — les credentials metier dans n8n, pas dans des fichiers
+
+---
+
+## Travailler avec Claude Code
+
+Spark est concu pour etre opere avec un agent IA. Le fichier [`CLAUDE.md`](CLAUDE.md) est le guide de reference que Claude Code charge automatiquement a l'ouverture d'un repo Spark. Il couvre :
+
+- **Vocabulaire et principes** — side-stack, source de verite, role de chaque composant
+- **Skills n8n** (7 skills) — configuration de nodes, patterns de workflow, expressions, Code nodes JS/Python, validation
+- **Skill NocoDB** — API v3 complete, filtres `where`, CLI
+- **Serveurs MCP** — `n8n-mcp` et `nocodb-mcp` embarques dans le compose pour interagir avec les instances live
+- **Conventions** — nommage workflows, gestion secrets, structure de commits
+
+Chaque repo d'entreprise herite de ce CLAUDE.md et l'adapte a son contexte (logiciels legacy, conventions internes).
 
 ---
 

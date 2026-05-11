@@ -6,9 +6,9 @@
 
 ## Ce qu'est Spark
 
-Spark est un **side-stack** : un Mac Mini pose a cote des systemes existants du client. Il ne remplace rien. Le CRM reste. L'ERP reste. Le fichier Excel qui marche depuis 2012 reste. Spark les fait parler entre eux.
+Spark est un **side-stack** : un Mac Mini pose a cote des systemes existants de l'entreprise. Il ne remplace rien. Le CRM reste. L'ERP reste. Le fichier Excel qui marche depuis 2012 reste. Spark les fait parler entre eux.
 
-**La source de verite business est toujours le systeme metier du client** (Phone Check, Pennylane, Google Sheets, ERP, WMS...). NocoDB n'est jamais la source de verite business — c'est un bac a sable, un staging, une surface pour des donnees qui n'existaient nulle part avant. n8n est un pont controle qui ouvre des portes choisies vers les sources metier.
+**La source de verite business est toujours le systeme metier de l'entreprise** (Phone Check, Pennylane, Google Sheets, ERP, WMS...). NocoDB n'est jamais la source de verite business — c'est un bac a sable, un staging, une surface pour des donnees qui n'existaient nulle part avant. n8n est un pont controle qui ouvre des portes choisies vers les sources metier.
 
 ---
 
@@ -16,8 +16,8 @@ Spark est un **side-stack** : un Mac Mini pose a cote des systemes existants du 
 
 | Terme | Sens |
 |-------|------|
-| **Spark** | La kit / methode (org GitHub `spark-kit`). Pas un site client. |
-| **Site** | Un deploiement Spark concret : 1 Mac Mini, 1 client, 1 domaine, 1 repo. |
+| **Spark** | La kit / methode (org GitHub `spark-kit`). Pas un site specifique. |
+| **Site** | Un deploiement Spark concret : 1 Mac Mini, 1 entreprise, 1 domaine, 1 repo. |
 | **`SPARK_PREFIX`** | Slug par-site qui forme les hostnames (`<prefix>-<service>.<domain>`). Ce n'est PAS le nom de la kit. |
 | **Playbook** | Brique d'integration assemblable (workflow n8n + tables NocoDB + config). |
 
@@ -80,7 +80,7 @@ La stack embarque deux couches complementaires. **Utiliser les MCP pour interagi
 
 ## Configuration Claude Code
 
-Le repo client contient un `.mcp.json` (gitignored) qui pointe vers les wrapper scripts :
+Le repo entreprise contient un `.mcp.json` (gitignored) qui pointe vers les wrapper scripts :
 
 ```json
 {
@@ -107,7 +107,7 @@ Les scripts sourcent `infra/.env` et lancent `docker run --network <project>_spa
 
 - Pas de credential en clair dans le repo — jamais.
 - `.env` est gitignored. Verifier avec `git status` avant tout commit.
-- Les secrets metier (API keys, tokens des logiciels client) vont dans **n8n > Settings > Credentials**, chiffres par `N8N_ENCRYPTION_KEY`.
+- Les secrets metier (API keys, tokens des logiciels de l'entreprise) vont dans **n8n > Settings > Credentials**, chiffres par `N8N_ENCRYPTION_KEY`.
 - Le `.env` ne contient que les secrets d'infrastructure de la stack.
 
 ### Workflows n8n
@@ -125,10 +125,10 @@ Les scripts sourcent `infra/.env` et lancent `docker run --network <project>_spa
 
 ---
 
-## Structure d'un repo client
+## Structure d'un repo entreprise
 
 ```
-<client>/
+<entreprise>/
 ├── infra/
 │   ├── .env                  secrets (gitignored)
 │   ├── .env.example          template sans secrets
@@ -142,11 +142,11 @@ Les scripts sourcent `infra/.env` et lancent `docker run --network <project>_spa
 │       ├── mcp-n8n.sh        wrapper MCP n8n
 │       └── mcp-nocodb.sh     wrapper MCP NocoDB
 ├── discovery/
-│   ├── onboarding/           questionnaires client
+│   ├── onboarding/           questionnaires entreprise
 │   ├── fiches/               fiches-logiciel legacy
 │   └── prds/                 PRDs des POCs
 ├── LESSONS-LEARNED.md        notes operationnelles
-├── CLAUDE.md                 ce fichier, adapte au client
+├── CLAUDE.md                 ce fichier, adapte a l'entreprise
 └── .mcp.json                 config MCP (gitignored)
 ```
 
