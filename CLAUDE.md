@@ -159,6 +159,7 @@ Apres le premier acces aux apps :
 │   │   ├── Caddyfile
 │   │   ├── postgres/init-db.sh
 │   │   └── nocodb-mcp/Dockerfile
+│   ├── apps/                    apps metier statiques (servies par Caddy sur -app)
 │   └── scripts/
 │       ├── tunnel-up.sh      creation routes + CNAMEs CF
 │       ├── tunnel-down.sh    suppression routes + CNAMEs

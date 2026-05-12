@@ -47,7 +47,7 @@ Spark ne remplace rien. Le CRM reste. L'ERP reste. Le fichier Excel qui marche d
 | **n8n** | Orchestration, workflows, connexion entre logiciels | Open source, 400+ connecteurs, code quand il faut |
 | **NocoDB** | Base de donnees visuelle (comme Airtable, en local) | Les non-devs peuvent creer des vues et des formulaires |
 | **PostgreSQL 16** | Base relationnelle (n8n + NocoDB, users separes) | Un seul backup couvre tout |
-| **Caddy** | Reverse proxy interne | Route le trafic vers les bons services |
+| **Caddy** | Reverse proxy + serveur de fichiers | Route le trafic, sert les apps metier statiques |
 | **Cloudflare Tunnel** | Acces HTTPS distant | TLS gere par Cloudflare, zero cert a gerer, zero port ouvert |
 
 Tout tourne dans Docker via **Colima** (MIT, headless, leger en RAM).
@@ -130,7 +130,7 @@ Tout au long de cette etape, remplacer `acme` par le slug de l'entreprise et `ex
 ### Creer l'arborescence
 
 ```bash
-mkdir -p ~/spark/{config/postgres,config/nocodb-mcp,data,logs,backups,scripts}
+mkdir -p ~/spark/{config/postgres,config/nocodb-mcp,apps,data,logs,backups,scripts}
 cd ~/spark
 ```
 
@@ -206,6 +206,18 @@ http://{$SPARK_PREFIX}-n8n.{$SPARK_DOMAIN} {
     }
 }
 
+http://{$SPARK_PREFIX}-app.{$SPARK_DOMAIN} {
+    handle /apps/* {
+        root * /srv
+        file_server
+    }
+    handle {
+        reverse_proxy n8n:5678 {
+            header_up X-Forwarded-Proto https
+        }
+    }
+}
+
 http://{$SPARK_PREFIX}-db.{$SPARK_DOMAIN} {
     reverse_proxy nocodb:8080 {
         header_up X-Forwarded-Proto https
@@ -271,7 +283,7 @@ services:
       N8N_PORT: 5678
       N8N_PROTOCOL: https
       N8N_EDITOR_BASE_URL: https://${SPARK_PREFIX}-n8n.${SPARK_DOMAIN}/
-      WEBHOOK_URL: https://${SPARK_PREFIX}-n8n.${SPARK_DOMAIN}/
+      WEBHOOK_URL: https://${SPARK_PREFIX}-app.${SPARK_DOMAIN}/
       N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
       N8N_DIAGNOSTICS_ENABLED: "false"
       N8N_PERSONALIZATION_ENABLED: "false"
@@ -306,6 +318,7 @@ services:
       SPARK_PREFIX: ${SPARK_PREFIX}
     volumes:
       - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./apps:/srv/apps:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -420,6 +433,8 @@ credentials-file: $HOME/.cloudflared/$TUNNEL_ID.json
 ingress:
   - hostname: acme-n8n.example.com
     service: http://localhost:18080
+  - hostname: acme-app.example.com
+    service: http://localhost:18080
   - hostname: acme-db.example.com
     service: http://localhost:18080
   - service: http_status:404
@@ -432,6 +447,7 @@ EOF
 
 ```bash
 cloudflared tunnel route dns spark-acme acme-n8n.example.com
+cloudflared tunnel route dns spark-acme acme-app.example.com
 cloudflared tunnel route dns spark-acme acme-db.example.com
 ```
 
@@ -491,10 +507,11 @@ CF_ZONE_ID=<ID de la zone parente>
 
 ```bash
 curl -sI https://acme-n8n.example.com | head -5
+curl -sI https://acme-app.example.com | head -5
 curl -sI https://acme-db.example.com | head -5
 ```
 
-Les deux doivent repondre en HTTPS avec un status 200 ou 302.
+Les trois doivent repondre en HTTPS avec un status 200 ou 302.
 
 ---
 
@@ -502,7 +519,8 @@ Les deux doivent repondre en HTTPS avec un status 200 ou 302.
 
 | Service | URL | Identifiants |
 |---------|-----|-------------|
-| **n8n** | `https://<prefix>-n8n.<domain>` | Creer le compte owner au premier acces |
+| **n8n** (editeur) | `https://<prefix>-n8n.<domain>` | Creer le compte owner au premier acces |
+| **n8n** (webhooks + apps) | `https://<prefix>-app.<domain>` | Pas de login — sert les webhooks et les apps metier statiques |
 | **NocoDB** | `https://<prefix>-db.<domain>` | Creer le compte admin au premier acces |
 
 Au premier acces, n8n demande de creer un compte owner. Ce compte est le seul admin — noter l'email et le mot de passe.
@@ -529,17 +547,24 @@ Les secrets des systemes metier (API keys, tokens des logiciels de l'entreprise)
 │        │                                     │
 │        ▼ http://127.0.0.1:18080              │
 │   ┌─────────┐                                │
-│   │  Caddy   │ reverse proxy                 │
+│   │  Caddy   │ reverse proxy + file_server   │
 │   └────┬─────┘                               │
-│        │         ┌─────────┐  ┌───────────┐  │
-│        ├────────▸│  n8n    │  │  NocoDB    │  │
-│        │         │  :5678  │  │  :8080     │  │
-│        │         └────┬────┘  └─────┬─────┘  │
-│        │              │             │        │
-│        │         ┌────▼─────────────▼────┐   │
-│        │         │    PostgreSQL 16      │   │
-│        │         │    users: n8n, nocodb │   │
-│        │         └──────────────────────┘   │
+│        │                                     │
+│   -n8n │  -app (webhooks)  -app (/apps/*)    │
+│    ┌───▼──────────▸┐       ┌──────────────┐  │
+│    │     n8n       │       │  apps/ (html) │  │
+│    │     :5678     │       │  file_server  │  │
+│    └───────┬───────┘       └──────────────┘  │
+│            │          -db                    │
+│            │    ┌───────────┐                 │
+│            │    │  NocoDB    │                │
+│            │    │  :8080     │                │
+│            │    └─────┬─────┘                │
+│            │          │                      │
+│            │    ┌─────▼──────────────────┐   │
+│            │    │    PostgreSQL 16       │   │
+│            └───▸│    users: n8n, nocodb  │   │
+│                 └───────────────────────┘   │
 │                                              │
 │   Volumes: n8n_data, nocodb_data,            │
 │   postgres_data, caddy_*                     │
@@ -599,6 +624,9 @@ colima start --cpu 4 --memory 6 --disk 60
 | **Spark** | Le kit / template — ce projet |
 | **Site** | Un deploiement Spark concret : 1 Mac Mini, 1 entreprise, 1 domaine |
 | **`SPARK_PREFIX`** | Slug par-site qui forme les hostnames (`<prefix>-<service>.<domain>`) |
+| **`-n8n`** | Sous-domaine editeur/admin — acces reserve au builder |
+| **`-app`** | Sous-domaine equipes — webhooks n8n + apps metier statiques (`/apps/*`) |
+| **`-db`** | Sous-domaine NocoDB — vues, formulaires, data pour les equipes |
 | **Pattern A** | Tunnel Cloudflare local-managed (config YAML sur le Mac, pas sur le dashboard CF) |
 | **Playbook** | Brique d'integration assemblable (workflow n8n + tables NocoDB + config) |
 
