@@ -56,6 +56,23 @@ Tout tourne dans Docker via **Colima** (MIT, headless, leger en RAM).
 
 ---
 
+## Qui fait quoi
+
+Spark implique 4 roles. Dans une petite structure, une seule personne peut cumuler les 4 — mais les casquettes restent distinctes.
+
+| Role | Ce qu'il fait | Ce qu'il touche |
+|------|--------------|-----------------|
+| **Admin / infra** | Installe le Mac, Docker, Colima, le tunnel. Gere le `.env` et les backups. | Terminal, `docker compose`, fichiers de config |
+| **Gestionnaire de credentials** | Configure les connexions aux logiciels metier (API keys, OAuth2) dans le coffre-fort n8n. | `<prefix>-n8n.<domain>` > Settings > Credentials |
+| **Builder** | Concoit et construit les POCs avec Claude Code : tables, workflows, pages HTML. | Claude Code + MCP, n8n, NocoDB, repo Git |
+| **Utilisateur final** | Utilise les outils construits : formulaires, dashboards, vues NocoDB. | `<prefix>-app.<domain>` et `<prefix>-db.<domain>` uniquement |
+
+L'utilisateur final ne va **jamais** sur `-n8n`. S'il a besoin de quelque chose, il le demande — le builder le construit.
+
+Le guide complet des roles (matrice d'acces, documentation par profil) est dans [`BIENVENUE.md`](https://github.com/spark-kit/templates/blob/main/BIENVENUE.md) du repo templates.
+
+---
+
 ## Pre-requis
 
 ### Materiel
