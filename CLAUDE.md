@@ -191,6 +191,27 @@ La conf URL `NC_DB="pg://...&p=XXX&d=..."` URL-decode le password. Si le passwor
 
 Le YAML cloudflared vit cote hote (`~/.cloudflared/config-*.yml`), edite par `scripts/tunnel-up.sh` via blocs marques `# >>> spark-begin` / `# <<< spark-end`. Ne pas editer manuellement les blocs marques.
 
+### NocoDB v3 — vues custom = Enterprise
+
+Sur NocoDB CE (le cas par defaut auto-heberge), l'API v3 des vues (`/api/v3/meta/bases/.../tables/.../views`) renvoie `ERR_LICENSE_REQUIRED`. Le CLI v3 ne peut donc pas creer/lister de vues Kanban / Calendar / Gallery / Form en programmatique. Workarounds : (a) creer les vues via l'UI NocoDB a la main, ou (b) se contenter de la grille par defaut. Les autres operations meta (tables, fields) marchent normalement sur CE.
+
+### n8n — credential NocoDB : utiliser `nocoDbApiToken`, pas Header Auth
+
+Quand un workflow n8n appelle l'API NocoDB via HTTP Request node, configurer le credential en type natif `nocoDbApiToken` (libelle "API Token" dans l'UI n8n). Ne pas creer un Header Auth generique avec `xc-token` — c'est techniquement equivalent mais moins propre et rejete par certains endpoints proteges.
+
+### n8n — lecture de fichiers du repo via volume mount
+
+Le node "Read/Write Files from Disk" n'autorise par defaut que les chemins sous `/home/node/.n8n-files/`. Pour qu'un workflow puisse lire des fichiers du repo (PRDs MD, configs...), monter dans ce path :
+
+```yaml
+# infra/docker-compose.yml, service n8n
+volumes:
+  - n8n_data:/home/node/.n8n
+  - ../discovery:/home/node/.n8n-files/discovery:ro
+```
+
+Le `:ro` rend la lecture seule (recommande). Setter `N8N_RESTRICT_FILE_ACCESS_TO` pour etendre la whitelist est theoriquement possible mais n8n applique parfois encore la restriction par defaut — preferer le mount dans `/home/node/.n8n-files/*`.
+
 ---
 
 ## Liens
