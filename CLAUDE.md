@@ -60,27 +60,34 @@ La stack embarque deux couches complementaires. **Utiliser les MCP pour interagi
 ### NocoDB
 
 **Skill** (`nocodb`) :
-- API v3 complete : data CRUD, meta management, links, filters, sorts, attachments
-- Inclut un script CLI `nocodb.sh` pour operations en ligne de commande
+- Reference API v3 complete : data CRUD, meta management, links, filters, sorts, attachments
+- Inclut le CLI `nocodb.sh` — c'est l'outil d'**action** pour NocoDB
 - Syntaxe des filtres `where` : `(field,op,value)~and(field2,op2,value2)`
 
-**MCP** (`nocodb-mcp`) :
-- Lecture/ecriture de records, schema, tables
-- Se connecte a `http://nocodb:8080` en interne Docker
-- Script wrapper : `infra/scripts/mcp-nocodb.sh`
+**Acces live : API v3 via CLI `nocodb.sh`** (pas de MCP). L'ecosysteme MCP NocoDB n'est pas stable contre les versions recentes (`2026.04.5+`) — le package historique `@andrewlwn77/nocodb-mcp@0.2.2` cible v1/v2 que NocoDB rejette pour les PAT. Cf. INC-2026-05-19 dans `INCIDENTS.md`. La stack n'integre pas de MCP NocoDB ; on s'en tient au CLI tant qu'un package compatible v3 n'a pas ete valide.
+
+Utilisation type :
+```bash
+set -a; source infra/.env; set +a
+export NOCODB_TOKEN="$NOCODB_API_TOKEN"
+export NOCODB_URL="https://<prefix>-db.<domain>"
+bash ~/.claude/skills/nocodb/scripts/nocodb.sh table:list <base>
+unset NOCODB_TOKEN NOCODB_API_TOKEN
+```
 
 ### Regles
 
-1. **Ne jamais `curl` une API quand un MCP peut le faire.** Les MCP gerent auth, pagination, format.
-2. **Skills = reference, MCP = action.** Consulter la skill pour comprendre la syntaxe, utiliser le MCP pour executer.
-3. **Charger la skill avant de configurer un node.** `n8n-node-configuration` donne les champs requis par operation — evite les allers-retours.
-4. **Valider avec `n8n-validation-expert`** apres avoir modifie un workflow.
+1. **n8n : ne jamais `curl` quand le MCP n8n peut le faire.** Le MCP gere auth, pagination, format.
+2. **NocoDB : toujours passer par `nocodb.sh`.** Pas de curl ad-hoc, pas de docker exec psql, pas de lecture brute de `.env`.
+3. **Skills = reference, MCP/CLI = action.** Consulter la skill pour comprendre la syntaxe, utiliser le MCP n8n ou le CLI NocoDB pour executer.
+4. **Charger la skill avant de configurer un node.** `n8n-node-configuration` donne les champs requis par operation — evite les allers-retours.
+5. **Valider avec `n8n-validation-expert`** apres avoir modifie un workflow.
 
 ---
 
 ## Configuration Claude Code
 
-Le repo entreprise contient un `.mcp.json` (gitignored) a la racine qui pointe vers les wrapper scripts :
+Le repo entreprise contient un `.mcp.json` (gitignored) a la racine qui pointe vers le wrapper n8n :
 
 ```json
 {
@@ -88,16 +95,12 @@ Le repo entreprise contient un `.mcp.json` (gitignored) a la racine qui pointe v
     "n8n-mcp": {
       "command": "bash",
       "args": ["infra/scripts/mcp-n8n.sh"]
-    },
-    "nocodb-mcp": {
-      "command": "bash",
-      "args": ["infra/scripts/mcp-nocodb.sh"]
     }
   }
 }
 ```
 
-Les scripts sourcent `infra/.env` et lancent `docker run --network spark_spark` en mode stdio (`name: spark` dans le compose → reseau `spark_spark`). Au demarrage d'une session, les MCP apparaissent automatiquement comme tool providers.
+Le script source `infra/.env` et lance `docker run --network spark_spark` en mode stdio (`name: spark` dans le compose → reseau `spark_spark`). Au demarrage d'une session, le MCP n8n apparait automatiquement comme tool provider. NocoDB s'utilise via le CLI `nocodb.sh` de la skill (cf. plus haut).
 
 ### Installation des skills
 
@@ -157,14 +160,12 @@ Apres le premier acces aux apps :
 │   ├── docker-compose.yml
 │   ├── config/
 │   │   ├── Caddyfile
-│   │   ├── postgres/init-db.sh
-│   │   └── nocodb-mcp/Dockerfile
+│   │   └── postgres/init-db.sh
 │   ├── apps/                    apps metier statiques (servies par Caddy sur -app)
 │   └── scripts/
 │       ├── tunnel-up.sh      creation routes + CNAMEs CF
 │       ├── tunnel-down.sh    suppression routes + CNAMEs
-│       ├── mcp-n8n.sh        wrapper MCP n8n
-│       └── mcp-nocodb.sh     wrapper MCP NocoDB
+│       └── mcp-n8n.sh        wrapper MCP n8n
 ├── discovery/
 │   ├── onboarding/           questionnaires entreprise
 │   ├── fiches/               fiches-logiciel legacy

@@ -147,7 +147,7 @@ Tout au long de cette etape, remplacer `acme` par le slug de l'entreprise et `ex
 ### Creer l'arborescence
 
 ```bash
-mkdir -p ~/spark/{config/postgres,config/nocodb-mcp,apps,data,logs,backups,scripts}
+mkdir -p ~/spark/{config/postgres,apps,data,logs,backups,scripts}
 cd ~/spark
 ```
 
@@ -245,17 +245,7 @@ CADDY
 
 > `header_up X-Forwarded-Proto https` est obligatoire : Caddy recoit du HTTP depuis cloudflared, mais les apps doivent croire qu'elles sont en HTTPS (sinon n8n refuse les cookies securises).
 
-**`config/nocodb-mcp/Dockerfile`** — image locale pour le serveur MCP NocoDB :
-
-```bash
-cat > config/nocodb-mcp/Dockerfile <<'DOCKERFILE'
-FROM node:22-alpine
-WORKDIR /app
-RUN npm install -g @andrewlwn77/nocodb-mcp@0.2.2
-USER node
-ENTRYPOINT ["nocodb-mcp"]
-DOCKERFILE
-```
+> **Pas de Dockerfile MCP NocoDB.** L'agent acces a NocoDB via son API v3 (PAT) en passant par le CLI bundle dans la skill `nocodb` — pas via un serveur MCP. Raison : l'ecosysteme MCP NocoDB n'est pas stable contre NocoDB 2026.04.5+ (les packages disponibles ciblent v1/v2 qui rejettent les PAT). Cf. INC-2026-05-19 dans `INCIDENTS.md`.
 
 ### Creer le docker-compose.yml
 
@@ -362,16 +352,6 @@ services:
       resources:
         limits:
           memory: 512M
-
-  nocodb-mcp:
-    build: ./config/nocodb-mcp
-    restart: unless-stopped
-    networks: [spark]
-    stdin_open: true
-    depends_on: [nocodb]
-    environment:
-      NOCODB_BASE_URL: http://nocodb:8080
-      NOCODB_API_TOKEN: ${NOCODB_API_TOKEN}
 
 volumes:
   postgres_data:
@@ -682,22 +662,24 @@ Siemens et Dassault Systemes ont construit l'usine connectee pour les grands gro
 
 Spark est concu pour etre opere avec un agent IA. Le fichier [`CLAUDE.md`](CLAUDE.md) est le guide de reference que Claude Code charge automatiquement a l'ouverture d'un repo Spark.
 
-Les serveurs MCP (`n8n-mcp`, `nocodb-mcp`) sont deja dans le `docker-compose.yml` ci-dessus. Il reste a creer les scripts de connexion, configurer Claude Code, et installer les skills.
+Le serveur MCP `n8n-mcp` est deja dans le `docker-compose.yml` ci-dessus. Il reste a creer le script de connexion, configurer Claude Code, et installer les skills. Pour NocoDB, **pas de MCP** : l'agent passe par le CLI `nocodb.sh` de la skill `nocodb` (API v3, PAT). Raison : aucun package MCP NocoDB n'est aujourd'hui compatible avec les versions recentes de NocoDB (2026.04.5+) — cf. INC-2026-05-19. La doc se tient au canal qui fonctionne maintenant.
 
 ### Obtenir les cles API
 
 Apres le premier acces (etape 4), creer les tokens dans chaque app :
 
 1. **n8n** : Settings > API > Create API Key → copier dans `.env` a la ligne `N8N_API_KEY=`
-2. **NocoDB** : Team & Settings > Tokens > Add New Token → copier dans `.env` a la ligne `NOCODB_API_TOKEN=`
+2. **NocoDB** : Team & Settings > Tokens > Add New Token → copier dans `.env` a la ligne `NOCODB_API_TOKEN=` (PAT `nc_pat_...`). **Copier la valeur immediatement** dans la modale — NocoDB ne la re-affiche jamais ; si vous la perdez, il faudra regenerer un nouveau token.
 
-Puis relancer la stack pour que les MCP prennent les nouvelles cles :
+Puis relancer la stack pour que le MCP n8n prenne sa cle :
 
 ```bash
 cd ~/spark && docker compose up -d
 ```
 
-### Creer les scripts MCP
+Le token NocoDB est lu depuis `.env` par le CLI au runtime (pas besoin de restart).
+
+### Creer le script MCP n8n
 
 **`scripts/mcp-n8n.sh`** — connecte Claude Code a n8n via le reseau Docker :
 
@@ -720,28 +702,11 @@ MCP
 chmod +x scripts/mcp-n8n.sh
 ```
 
-**`scripts/mcp-nocodb.sh`** — connecte Claude Code a NocoDB :
-
-```bash
-cat > scripts/mcp-nocodb.sh <<'MCP'
-#!/usr/bin/env bash
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-source "$SCRIPT_DIR/../.env"
-exec docker run -i --rm \
-  --network spark_spark \
-  -e "NOCODB_BASE_URL=http://nocodb:8080" \
-  -e "NOCODB_API_TOKEN=${NOCODB_API_TOKEN}" \
-  spark-nocodb-mcp
-MCP
-chmod +x scripts/mcp-nocodb.sh
-```
-
 > Le reseau `spark_spark` correspond au projet compose `spark` + le reseau `spark`. Si vous avez change le `name:` dans le compose, adaptez en consequence.
 
 ### Configurer Claude Code
 
-Creer `.mcp.json` a la racine du repo (gitignored) :
+Creer `.mcp.json` a la racine du repo (gitignored) — uniquement n8n :
 
 ```bash
 cat > .mcp.json <<'JSON'
@@ -750,24 +715,20 @@ cat > .mcp.json <<'JSON'
     "n8n-mcp": {
       "command": "bash",
       "args": ["infra/scripts/mcp-n8n.sh"]
-    },
-    "nocodb-mcp": {
-      "command": "bash",
-      "args": ["infra/scripts/mcp-nocodb.sh"]
     }
   }
 }
 JSON
 ```
 
-Au demarrage d'une session Claude Code dans ce repo, les MCP apparaissent automatiquement comme tool providers.
+Au demarrage d'une session Claude Code dans ce repo, le MCP n8n apparait automatiquement comme tool provider. NocoDB est utilisable via le CLI de la skill (voir plus bas).
 
 ### Installer les skills
 
-Les skills donnent a Claude Code la documentation de reference pour configurer n8n et NocoDB sans allers-retours.
+Les skills donnent a Claude Code la documentation de reference pour configurer n8n et NocoDB sans allers-retours. **La skill NocoDB est essentielle ici** : elle embarque le CLI `nocodb.sh` qui est le canal d'acces a NocoDB pour l'agent (en l'absence de MCP NocoDB stable).
 
 ```bash
-# NocoDB — API v3, filtres, CLI
+# NocoDB — reference API v3 + CLI nocodb.sh (canal d'acces live)
 npx @anthropic-ai/claude-code skills add nocodb/agent-skills
 
 # n8n — 7 skills (nodes, workflows, expressions, code, validation)
@@ -776,17 +737,33 @@ npx @anthropic-ai/claude-code skills add n8n/agent-skills
 
 > Les skills s'installent dans `~/.claude/skills/` et sont disponibles dans toutes les sessions Claude Code. A faire une seule fois par poste.
 
+Utilisation type du CLI NocoDB (a partager avec l'agent au demarrage d'une session) :
+
+```bash
+set -a; source infra/.env; set +a
+export NOCODB_TOKEN="$NOCODB_API_TOKEN"
+export NOCODB_URL="https://<prefix>-db.<domain>"
+bash ~/.claude/skills/nocodb/scripts/nocodb.sh workspace:list
+# … table:list, field:create, record:list, etc.
+unset NOCODB_TOKEN NOCODB_API_TOKEN
+```
+
+Le CLI cible `/api/v3/...` avec le header `xc-token`, lit le token via env, ne l'expose jamais en sortie.
+
 ### Resume outillage
 
 | Outil | Type | Ce qu'il fait | Ou il vit |
 |-------|------|---------------|-----------|
 | `n8n-mcp` | MCP server | Lire/ecrire workflows, activer, executer | docker-compose (service) + scripts/mcp-n8n.sh |
-| `nocodb-mcp` | MCP server | Lire/ecrire records, schema, tables | docker-compose (service) + scripts/mcp-nocodb.sh |
+| `nocodb.sh` (skill `nocodb`) | CLI v3 | Lire/ecrire records, schema, tables via API v3 | ~/.claude/skills/nocodb/scripts/ |
 | `n8n-*` skills (x7) | Reference | Config nodes, patterns workflow, expressions, code JS/Python, validation | ~/.claude/skills/ |
 | `nocodb` skill | Reference | API v3 complete, filtres `where`, CLI bash | ~/.claude/skills/ |
 | `CLAUDE.md` | Guide agent | Vocabulaire, principes, conventions | racine du repo |
 
-**Regle** : utiliser les MCP pour agir sur les instances live, les skills pour comprendre la syntaxe et les patterns. Ne jamais `curl` une API quand un MCP peut le faire.
+**Regles** :
+- n8n : utiliser le MCP pour agir sur les instances live ; ne jamais `curl` quand le MCP peut le faire.
+- NocoDB : utiliser le CLI `nocodb.sh` de la skill ; jamais de curl ad-hoc, jamais d'acces direct via `docker exec psql` ou lecture brute de `.env`.
+- Skills : pour comprendre la syntaxe et les patterns en amont de l'action.
 
 ---
 

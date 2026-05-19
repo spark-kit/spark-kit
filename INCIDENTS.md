@@ -7,6 +7,80 @@
 
 ---
 
+## INC-2026-05-19 — MCP `nocodb-mcp` retourne Forbidden malgré un PAT valide
+
+**Site** : anonymisé (site Spark avec NocoDB 2026.04.5+)
+**Sévérité** : medium (MCP NocoDB inutilisable côté agent ; CLI reste disponible)
+**Statut** : 🟡 mitigé (fallback CLI sanctionné) — fix structurel à faire (changement de package MCP)
+
+### Symptôme
+- Toute requête `mcp__nocodb-mcp__*` (même `list_bases`) retourne :
+  ```
+  MCP error -32603: NocoDB error: Forbidden - Unauthorized access
+  ```
+- Le PAT a été régénéré, le wrapper MCP relancé, le hash du token comparé entre `.env` et l'env du container MCP → identique.
+- Même token, en curl direct contre `https://<site>-db.<domain>/api/v3/meta/workspaces` → `HTTP 200`.
+
+### Diagnostic
+```bash
+# 1. Confirmer que le token est valide côté v3 (sans l'afficher)
+set -a; source infra/.env; set +a
+curl -sS -o /dev/null -w "HTTP %{http_code}\n" \
+  -H "xc-token: $NOCODB_API_TOKEN" \
+  https://<site>-db.<domain>/api/v3/meta/workspaces
+unset NOCODB_API_TOKEN
+# → HTTP 200 (PAT OK)
+
+# 2. Confirmer que le container MCP a bien le même token (hash compare)
+docker exec <mcp-container> sh -c 'printf "%s" "$NOCODB_API_TOKEN" | sha256sum | cut -c1-16'
+# Comparer avec le hash calculé côté .env
+
+# 3. Inspecter le package MCP installé
+docker exec <mcp-container> sh -c 'grep -rE "xc-token|/api/v[0-9]+/" /usr/local/lib/node_modules/@*/nocodb-mcp/dist/ | head'
+# → si "/api/v1/db/meta/projects" ou "/api/v2/meta/..." → INCOMPATIBLE
+```
+
+### Cause racine
+Le package NPM `@andrewlwn77/nocodb-mcp@0.2.2` cible les endpoints **v1/v2** de NocoDB :
+- `list_bases` → `GET /api/v1/db/meta/projects`
+- `create_table`, `add_column`, etc. → `/api/v2/meta/...`
+
+Or NocoDB 2026.04.5+ **rejette les PAT (`nc_pat_...`) sur v1/v2** — uniquement v3 les accepte (cf. mémoire `feedback-nocodb-api-workspace-scoping`). Le package MCP est donc structurellement incompatible avec les NocoDB récents. C'est un piège silencieux parce que l'erreur ressemble à un problème d'auth.
+
+### Fix immédiat
+Basculer sur le **CLI `nocodb.sh`** de la skill `nocodb` (`~/.claude/skills/nocodb/scripts/nocodb.sh`) — il cible nativement `/api/v3/...`, lit le token depuis env, ne l'expose jamais en sortie.
+
+```bash
+set -a; source infra/.env; set +a
+export NOCODB_TOKEN="$NOCODB_API_TOKEN"
+export NOCODB_URL="https://<site>-db.<domain>"
+bash ~/.claude/skills/nocodb/scripts/nocodb.sh workspace:list
+# … toutes les ops table:*, field:*, record:* derrière
+unset NOCODB_TOKEN NOCODB_API_TOKEN
+```
+
+### Fix structurel
+Remplacer le package MCP dans `infra/config/nocodb-mcp/Dockerfile` par :
+- Une version plus récente de `@andrewlwn77/nocodb-mcp` qui supporterait v3 (à vérifier dans le registre).
+- OU un autre package MCP communautaire compatible v3.
+- OU un fork patché. Au minimum, viser : `xc-token` header + endpoints `/api/v3/meta/...` et `/api/v3/data/...`.
+
+Avant de merger, ajouter un test smoke `nc_pat` → `list_bases` dans `validate-*.sh`.
+
+### Leçons exploitables (à porter dans Spark)
+
+- [ ] **Bootstrap** : tester le MCP NocoDB immédiatement après le 1er `docker compose up` avec un appel `list_bases`. Si Forbidden alors que la curl directe sur v3 marche → MCP incompatible, basculer doc agent sur CLI.
+- [ ] **Compose template** : épingler une version du package MCP qui est connue compatible v3, pas la dernière en blind.
+- [ ] **Doc agent** (`CLAUDE.md`) : règle "ne jamais curl quand un MCP peut le faire" doit avoir une exception explicite "**sauf si le MCP est structurellement cassé** — auquel cas le CLI bundlé dans la skill est le canal sanctionné". Sinon l'agent boucle.
+- [ ] **Diag rapide à préserver** : pour vérifier la validité d'un PAT NocoDB sans l'exposer, la commande `curl -sS -o /dev/null -w "HTTP %{http_code}\n" -H "xc-token: $TOK" .../api/v3/meta/workspaces` est le bon premier réflexe.
+
+### Temps réel
+- Détection → diagnostic complet : ~40 min (le faux problème "auth qui ne marche pas" a fait perdre du temps avant qu'on grep le source du package)
+- Diagnostic → fix immédiat (bascule CLI) : ~5 min
+- Fix structurel : non fait (open task)
+
+---
+
 ## INC-2026-05-05 — NocoDB crashloop, 502 sur `<site>-db.<domain>`
 
 **Site** : anonymisé (1er site Spark déployé)

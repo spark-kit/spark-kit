@@ -131,7 +131,7 @@ Pipeline consultant/agent pour transformer une decouverte client en livrable :
 
 **Skills** (reference API) : 7 skills n8n + 1 skill NocoDB.
 
-**MCP servers** (interaction live) : n8n-mcp + nocodb-mcp embarques dans le docker-compose de chaque site.
+**Outillage live** : MCP `n8n-mcp` embarque dans le docker-compose de chaque site ; NocoDB s'utilise via le CLI `nocodb.sh` de la skill (pas de MCP NocoDB integre — l'ecosysteme n'est pas stable contre NocoDB 2026.04.5+, cf. INC-2026-05-19 dans `INCIDENTS.md`).
 
 ### Priorite
 
