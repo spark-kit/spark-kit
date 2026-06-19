@@ -1,0 +1,36 @@
+================================================================
+ INFORMATIONS POUR ACCES SSH - Spark / Kyklos Date : 2026-06-19 
+================================================================
+
+1. ADRESSE IP 
+   Mon IP : 83.159.104.155 pour l'acces SSH sur les serveurs PREPROD et PROD.
+
+2. CLES PUBLIQUES SSH (ED25519)
+   -- PREPROD --
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOF0cnv93+cLBPNCtSgr156v6d9eN0pT7mdvJ1kpUcwS spark-kyklos-preprod
+   -- PROD →
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFT4dFICPWYbIrT5GzwUWEzYvo6r95MIHx1WFZjl/ac9 spark-kyklos-prod
+
+3. SYSTEME CIBLE
+   J'adapte la procedure d'installation pour Debian 12+ (Bookworm) ou Ubuntu 22.04+.
+   Pourras-tu me confirmer la distribution et la version exacte installee sur les serveurs.
+
+4. DROITS SUDO
+   Nous aurons besoin de privileges sudo pendant la phase d'installation uniquement, pour :
+   - Installer les paquets (Docker CE, cloudflared, outils)
+   - Creer un utilisateur systeme dedie (ex: spark)
+   - Configurer les services systemd
+   - Configurer le pare-feu (ufw)
+   Une fois l'installation terminee, l'utilisateur spark fonctionnera sans sudo (acces Docker via le groupe docker).
+
+5. REPERTOIRE D'INSTALLATION
+   Je prévois d'installer dans /opt/spark/ 
+   Si Ecritel ou EasyCash a une preference differente (/srv/, /home/spark/, autre), dis le moi
+
+6. RESEAU:PORTS
+   Connexions sortantes HTTPS (port 443) vers Cloudflare. 
+   Aucun port entrant hors ssh n'est necessaire : trafic passe par un tunnel Cloudflare
+
+7. CLOUDFLARED
+   Au bon moment je t'indiquerai un manipulation nécessaire à la création d'un token dans la section ZeroTrust
+================================================================
